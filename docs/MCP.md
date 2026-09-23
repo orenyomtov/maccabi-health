@@ -59,7 +59,7 @@ The SDK builds a fresh server instance per HTTP request, so the `exclusive()` se
 
 ## How the tools fit together
 
-Call `maccabi_capabilities` first. It needs no account, makes no upstream request, and returns what this server can read, the journeys below, and where coverage stops. That is cheaper than reading 42 tool descriptions and guessing.
+Call `maccabi_capabilities` first. It needs no account, makes no upstream request, and returns what this server can read, the journeys below, and where coverage stops. That is cheaper than reading 38 tool descriptions and guessing.
 
 The shape is three rules:
 
@@ -87,14 +87,14 @@ Refs are stateless. The same row mints the same token every time, nothing expire
 
 ## How many tools this is, and where that bites
 
-This server registers 42 tools. That is more than some clients want.
+This server registers 38 tools. That is more than some clients want.
 
-Cursor caps the agent at roughly 40 tools counted across every enabled MCP server, not per server. The limit is not in Cursor's own MCP documentation, but users report the agent saying so and report the count being cumulative, so treat the number as approximate and the behavior as real: with this server enabled alongside anything else, Cursor may silently stop offering some of its tools, and there is no error. The tool is simply not there. Enabling it on its own is the workaround. Anthropic's own guidance points the same way from a different direction: it puts the threshold for needing on-demand tool loading at 10 or more tools, or tool definitions over 10k tokens, and notes that model tool-selection accuracy degrades past 30 to 50 tools.
+Cursor caps the agent at roughly 40 tools counted across every enabled MCP server, not per server. The limit is not in Cursor's own MCP documentation, but users report the agent saying so and report the count being cumulative, so treat the number as approximate and the behavior as real: past the cap Cursor may silently stop offering some tools, and there is no error. The tool is simply not there. At 38 this server fits under the cap on its own, with almost nothing to spare: enable a second server of any size alongside it and you are over. Enabling it on its own is the workaround. Anthropic's own guidance points the same way from a different direction: it puts the threshold for needing on-demand tool loading at 10 or more tools, or tool definitions over 10k tokens, and notes that model tool-selection accuracy degrades past 30 to 50 tools.
 
 Two responses:
 
-- **In Cursor, use the CLI.** Cursor's agent has a shell, the CLI has no tool cap to hit, and bare `maccabi` is a ~5 KB index rather than ~35 KB of tool schemas. See [the CLI guide](CLI.md).
-- **Everywhere else, the count follows from the design.** The surface is already consolidated: one detail tool and one document tool cover every row-scoped read, which is why 42 covers what would otherwise be well over a hundred endpoints. `maccabi_capabilities` exists so a client does not have to read all 42 descriptions to find its way.
+- **In Cursor, use the CLI.** Cursor's agent has a shell, the CLI has no tool cap to hit, and bare `maccabi` is a ~5 KB index rather than ~33 KB of tool schemas. See [the CLI guide](CLI.md).
+- **Everywhere else, the count follows from the design.** The surface is already consolidated: one detail tool and one document tool cover every row-scoped read, and one account tool covers the member's own record, which is why 38 covers what would otherwise be well over a hundred endpoints. `maccabi_capabilities` exists so a client does not have to read all 38 descriptions to find its way.
 
 There is currently no flag to register a subset. If a client of yours needs one, [say so in an issue](https://github.com/orenyomtov/maccabi-health/issues).
 

@@ -41,7 +41,7 @@ describe("official SDK in-memory MCP integration", () => {
   test("initialize/listTools/readResource exposes fixed schemas and accurate scheduling annotation without accessing a session", async () => {
     const h = await setup();
     const { tools } = await h.client.listTools();
-    expect(tools.length).toBe(42);
+    expect(tools.length).toBe(38);
     for (const tool of tools) {
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.annotations?.destructiveHint).toBe(false);
@@ -86,7 +86,7 @@ describe("official SDK in-memory MCP integration", () => {
     let network = 0; let saves = 0;
     const saved = await session();
     const h = await setup({ resolveSession: async () => ({ session: saved, owner, save: async next => { saves++; expect(next.apiAuthorization).toBe("Bearer synthetic-upstream-token"); }, invalidate: async () => {} }), fetch: async () => { network++; return Response.json(bootstrap()); } });
-    const response = await h.client.callTool({ name: "maccabi_profile", arguments: {} });
+    const response = await h.client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
     expect(structured(response).data.f_name_hebrew).toBe("דוגמה");
     expect(JSON.stringify(response)).not.toContain(String(owner.memberId));
     expect(JSON.stringify(response)).not.toContain("synthetic-upstream-token");
@@ -232,7 +232,7 @@ describe("official SDK in-memory MCP integration", () => {
   test("upstream reauthentication invalidates once and is a tool error with protected browser guidance", async () => {
     const saved = await session(); let invalidates = 0;
     const h = await setup({ resolveSession: async () => ({ session: saved, owner, save: async () => {}, invalidate: async () => { invalidates++; }, reauthentication: { url: "https://personal.example/reauth", instruction: "Open the protected sign-in page." } }), connect: async () => { throw new ReauthenticationRequired(); } });
-    const response = await h.client.callTool({ name: "maccabi_profile", arguments: {} });
+    const response = await h.client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
     expect((response as any).isError).toBe(true);
     expect(structured(response).error).toEqual({ code: "REAUTHENTICATION_REQUIRED", instruction: "Open the protected sign-in page.", reauthenticationUrl: "https://personal.example/reauth", next: expect.any(Array) });
     expect(structured(response).error.next[0].tool).toBe("maccabi_login_status");
@@ -247,7 +247,7 @@ describe("official SDK in-memory MCP integration", () => {
         if (scenario === "account") throw new ReadOperationError("DEPENDENT_SELECTED", "account");
         return { readers: fakeReaders({ getVisit: async () => { throw new ReadOperationError("OWNER_MISMATCH", "visit"); } }), exportSession: async () => saved };
       } });
-      const response = await h.client.callTool({ name: scenario === "detail" ? "maccabi_detail" : "maccabi_profile", arguments: scenario === "detail" ? { ref: ref("visit", { appointment_id: "unknown-fixture" }) } : {} });
+      const response = await h.client.callTool({ name: scenario === "detail" ? "maccabi_detail" : "maccabi_account", arguments: scenario === "detail" ? { ref: ref("visit", { appointment_id: "unknown-fixture" }) } : { section: "profile" } });
       expect(structured(response).error.code).toBe(scenario === "invalidation-fails" ? "SESSION_INVALIDATION_FAILED" : scenario === "account" ? "DEPENDENT_SELECTED" : "OWNER_MISMATCH");
       if (scenario === "account") expect(structured(response).error.instruction).toContain("no new login is needed");
       expect(invalidates).toBe(scenario === "invalidation-fails" ? 1 : 0);
@@ -354,7 +354,7 @@ describe("observed billing summaries and medication document", () => {
     const totals = { ...result({ kupa_debt: 12.5, shaban_debt: 3, additional_charges_debt: 0 }), source: { ...result({}).source, scope: "payer-account-aggregate" as const } };
     const payment = result({ is_active_auth_exists: true, payment_method: 1, bank_name: "בנק סינתטי", last_four_digits_credit_card: "1234", account_number: "private-full-account", token: "private-token" });
     const h = await setup({ connect: async () => ({ readers: fakeReaders({ getPaymentMethods: async () => payment, getOutstandingDebt: async (...args: unknown[]) => { expect(args).toEqual([]); return totals; } }), exportSession: async () => saved }) });
-    const summary = structured(await h.client.callTool({ name: "maccabi_payment_methods", arguments: {} }));
+    const summary = structured(await h.client.callTool({ name: "maccabi_account", arguments: { section: "payment_methods" } }));
     expect(summary.data).toEqual({ is_active_auth_exists: true, payment_method: 1, bank_name: "בנק סינתטי", last_four_digits_credit_card: "1234" });
     expect(JSON.stringify(summary)).not.toContain("private-");
     expect(structured(await h.client.callTool({ name: "maccabi_payer_account_totals", arguments: {} }))).toEqual(totals);
@@ -366,10 +366,14 @@ describe("observed billing summaries and medication document", () => {
   test("financial tools reject identity/branch switching and retain explicit unsupported failures", async () => {
     const saved = await session();
     const h = await setup({ connect: async () => ({ readers: fakeReaders({ getOutstandingDebt: async () => { throw new ReadOperationError("UNSUPPORTED_FLOW", "outstanding-debt"); } }), exportSession: async () => saved }) });
-    for (const name of ["maccabi_payment_methods", "maccabi_payer_account_totals"]) {
+    for (const [name, base] of [["maccabi_account", { section: "payment_methods" }], ["maccabi_payer_account_totals", {}]] as const) {
       for (const args of [{ member_id: "never-selected" }, { person_type: 2 }, { path: "/private/never-read" }]) {
-        expect((await h.client.callTool({ name, arguments: args })).isError).toBe(true);
+        expect((await h.client.callTool({ name, arguments: { ...base, ...args } })).isError).toBe(true);
       }
+    }
+    // The section enum is the whole selector: a missing or invented one never reaches a reader.
+    for (const args of [{}, { section: "invented" }, { section: "payment_methods", document: "allergies" }]) {
+      expect((await h.client.callTool({ name: "maccabi_account", arguments: args })).isError).toBe(true);
     }
     for (const args of [{ document: "purchased_medications", member_id: "never-selected" }, { document: "invented" }, { document: "purchased_medications", irregular_only: true }]) {
       expect((await h.client.callTool({ name: "maccabi_report", arguments: args })).isError).toBe(true);
@@ -654,15 +658,15 @@ describe("owner contact and notifications", () => {
     const preferences = result({ statusCode: 0, preferredLanguageCode: 1, contact: { cellPhone: "0000000000", email: "example@example.invalid" }, groups: [{ ...state, services: [{ ...state, typeCode: null, defaultChannelCode: 1, selectedChannelCode: 2, isMaccabitonType: false, channels: [state] }] }] });
     const access = result({ state: "viewer-list" as const, users: [{ first_name: "שם", last_name: "סינתטי", user_id: "000000000", authentication_end_date: "2026-12-31" }] });
     const h = await setup({ connect: async () => ({ readers: fakeReaders({ getNotificationPreferences: async () => preferences, listAccountAccess: async () => access }), exportSession: async () => saved }) });
-    expect(structured(await h.client.callTool({ name: "maccabi_notification_settings", arguments: {} }))).toEqual(preferences);
-    expect(structured(await h.client.callTool({ name: "maccabi_authorized_users", arguments: {} }))).toEqual(access);
+    expect(structured(await h.client.callTool({ name: "maccabi_account", arguments: { section: "notification_settings" } }))).toEqual(preferences);
+    expect(structured(await h.client.callTool({ name: "maccabi_account", arguments: { section: "authorized_users" } }))).toEqual(access);
     expect(h.effects.saves).toBe(2);
     const creation = result({ state: "creation-available" as const, users: [] });
     const empty = await setup({ connect: async () => ({ readers: fakeReaders({ listAccountAccess: async () => creation }), exportSession: async () => saved }) });
-    expect(structured(await empty.client.callTool({ name: "maccabi_authorized_users", arguments: {} }))).toEqual(creation);
+    expect(structured(await empty.client.callTool({ name: "maccabi_account", arguments: { section: "authorized_users" } }))).toEqual(creation);
     const invalid = await setup();
-    for (const name of ["maccabi_notification_settings", "maccabi_authorized_users"]) {
-      for (const args of [{ owner: "never-selected" }, { registered: true }, { user_id: "never-selected" }, { limit: 1 }]) expect((await invalid.client.callTool({ name, arguments: args })).isError).toBe(true);
+    for (const section of ["notification_settings", "authorized_users"]) {
+      for (const args of [{ owner: "never-selected" }, { registered: true }, { user_id: "never-selected" }, { limit: 1 }]) expect((await invalid.client.callTool({ name: "maccabi_account", arguments: { section, ...args } })).isError).toBe(true);
     }
     expect(invalid.effects.loads).toBe(0);
   });
@@ -671,10 +675,10 @@ describe("owner contact and notifications", () => {
     const saved = await session();
     const original = result({ email: "example@example.invalid", phones_update_date: "2026-01-02", phones: [{ phone_type: "home", phone_prefix: "00", phone_no: 1234, fax_special_prefix: "" }], addresses: [{ city_name: "עיר סינתטית", street_name: "רחוב סינתטי", house_num: "1", apartment_num: "2" }] });
     const h = await setup({ connect: async () => ({ readers: fakeReaders({ getOwnerContactProfile: () => original }), exportSession: async () => saved }) });
-    expect(structured(await h.client.callTool({ name: "maccabi_contact_details", arguments: {} }))).toEqual(original);
+    expect(structured(await h.client.callTool({ name: "maccabi_account", arguments: { section: "contact_details" } }))).toEqual(original);
     expect(h.effects.saves).toBe(1);
     const invalid = await setup();
-    expect((await invalid.client.callTool({ name: "maccabi_contact_details", arguments: { member_id: "never-selected" } })).isError).toBe(true);
+    expect((await invalid.client.callTool({ name: "maccabi_account", arguments: { section: "contact_details", member_id: "never-selected" } })).isError).toBe(true);
     expect(invalid.effects.loads).toBe(0);
   });
 
@@ -975,7 +979,7 @@ test("anonymous directory configuration failure remains actionable and does not 
   const response = await h.client.callTool({ name: "maccabi_directory_search", arguments: { category: "doctors", field: "synthetic-key" } });
   expect(response.isError).toBe(true); const error = structured(response).error;
   expect(error.code).toBe("DIRECTORY_CONFIGURATION_UNAVAILABLE");
-  expect(error.instruction).toContain("official doctor directory in your browser"); expect(error.instruction).toContain("no search was submitted");
+  expect(error.instruction).toContain("bot-challenge page"); expect(error.instruction).toContain("official directory in a browser"); expect(error.instruction).toContain("no search was submitted");
   expect(h.effects.loads).toBe(0); expect(h.effects.saves).toBe(0); expect(h.effects.invalidates).toBe(0);
 });
 
@@ -1038,7 +1042,7 @@ describe("sign-in tools", () => {
     const h = await setup({ loginTools: "status-only", login: handle() });
     const { tools } = await h.client.listTools();
     const names = tools.map(tool => tool.name);
-    expect(tools).toHaveLength(40);
+    expect(tools).toHaveLength(36);
     expect(names).not.toContain("maccabi_login_start");
     expect(names).not.toContain("maccabi_login_verify");
     // Status and logout stay: the browser leg replaces the sign-in, not the local state a member can read or clear.
@@ -1205,14 +1209,14 @@ describe("a stalled call never becomes a server that stops answering", () => {
         return { readers: fakeReaders({ getOwnerProfile: () => result(profile) as any }), exportSession: async () => session() as any };
       },
     });
-    const stalled = await h.client.callTool({ name: "maccabi_profile", arguments: {} });
+    const stalled = await h.client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
     expect(stalled.isError).toBe(true);
     expect(structured(stalled).error.code).toBe("REQUEST_TIMEOUT");
     expect(JSON.stringify(stalled)).not.toContain("123456789");
     expect(h.effects.saves).toBe(0);
     // Nothing was wrong with the credential, so an abandoned call must never cost the member an SMS.
     expect(h.effects.invalidates).toBe(0);
-    const after = await h.client.callTool({ name: "maccabi_profile", arguments: {} });
+    const after = await h.client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
     expect(after.isError).not.toBe(true);
     expect(structured(after).data.f_name_hebrew).toBe("דוגמה");
   });
@@ -1225,7 +1229,7 @@ describe("a stalled call never becomes a server that stops answering", () => {
         return { readers: fakeReaders({ getOwnerProfile: () => result(profile) as any }), exportSession: async () => session() as any };
       },
     });
-    expect(structured(await h.client.callTool({ name: "maccabi_profile", arguments: {} })).error.code).toBe("REQUEST_TIMEOUT");
+    expect(structured(await h.client.callTool({ name: "maccabi_account", arguments: { section: "profile" } })).error.code).toBe("REQUEST_TIMEOUT");
     await new Promise(resolve => setTimeout(resolve, 400));
     // The abandoned call finished in the background. Saving from there would drop its older cookie
     // jar over whatever ran after it, which can cost the member the SMS that replaces a rotated cookie.
@@ -1244,7 +1248,7 @@ describe("a stalled call never becomes a server that stops answering", () => {
     // Two stalls ahead of it, so this read waits well past a single bound before its turn arrives.
     const stalled = [exclusive(() => new Promise(() => {})), exclusive(() => new Promise(() => {}))]
       .map(task => task.catch(() => undefined));
-    const queued = await h.client.callTool({ name: "maccabi_profile", arguments: {} });
+    const queued = await h.client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
     expect(queued.isError).not.toBe(true);
     expect(h.effects.saves).toBe(1);
     await Promise.all(stalled);

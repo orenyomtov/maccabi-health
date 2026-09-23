@@ -1389,7 +1389,7 @@ test("anonymous directory configuration error gives safe browser guidance withou
   expect(await runCli(["directory-search", "--category", "doctors", "--field", "synthetic-key", "--json"], f.deps)).toBe(1);
   const error = JSON.parse(f.error()).error;
   expect(error.code).toBe("DIRECTORY_CONFIGURATION_UNAVAILABLE"); expect(error.exitCode).toBe(1);
-  expect(error.message).toContain("official doctor directory in your browser"); expect(error.message).toContain("no search was submitted");
+  expect(error.message).toContain("bot-challenge page"); expect(error.message).toContain("official directory in a browser"); expect(error.message).toContain("no search was submitted");
   expect(f.output()).toBe(""); expect(f.calls).toEqual([]); expect(f.stored()).toEqual(saved);
 });
 

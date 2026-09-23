@@ -1,6 +1,19 @@
 import { Cookie, CookieJar, type SerializedCookieJar } from "tough-cookie";
-import { ReauthenticationRequired, UpstreamError } from "./errors";
+import { name, version, bugs } from "../../../package.json";
+import { MaccabiError, ReauthenticationRequired, UpstreamError } from "./errors";
 import type { MaccabiSession } from "./session";
+
+/**
+ * How this client identifies itself: our name, our version and where to complain about us. Node's
+ * fetch sends no User-Agent at all, which is worth fixing on its own - an operator who wants to
+ * rate-limit or block this client should be able to do it on sight.
+ *
+ * It is deliberately not a browser string. The public directory host is behind a bot filter that
+ * scores each request, and an honest UA does not get past it: it let one call through and then
+ * failed the next three identical ones. Only a full browser impersonation moved the needle, which
+ * is not something this client does. See docs/CAPABILITIES.md.
+ */
+export const USER_AGENT = `${name}/${version} (+${bugs.url})`;
 
 export const LOGIN_ORIGIN = "https://mac.maccabi4u.co.il";
 export const PORTAL_ORIGIN = "https://online.maccabi4u.co.il";
@@ -75,6 +88,10 @@ export class MaccabiTransport {
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
     this.#now = options.now ?? Date.now;
+    // The saved file is {session, owner}; handing that whole object to `session` is the common
+    // mistake, and a bare INVALID_SESSION does not say which part to pass.
+    if (options.session && !("version" in options.session) && (options.session as { session?: unknown }).session)
+      throw new MaccabiError("SESSION_NOT_UNWRAPPED", "Pass the inner `session` value, not the whole saved file: session.json holds {session, owner} and this option takes its `session` property.");
     if (options.session && options.session.version !== 1) throw new UpstreamError("INVALID_SESSION");
     try {
       this.#jar = options.session ? CookieJar.deserializeSync(options.session.cookies) : new CookieJar();

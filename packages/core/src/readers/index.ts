@@ -1347,8 +1347,10 @@ export class MaccabiReaders {
 
   async getVisit(appointmentId: string): Promise<ReadResult<SourceRecord>> {
     const operation = "visit";
-    if (!this.visitReferences.has(appointmentId)) await this.listVisits();
-    if (!this.visitReferences.has(appointmentId)) throw new ReadOperationError("OWNER_MISMATCH", operation);
+    if (!this.visitReferences.has(appointmentId)) {
+      const matches = (await this.listVisits()).data.filter(row => row.appointment_id === appointmentId);
+      if (!this.visitReferences.has(appointmentId)) throw new ReadOperationError(matches.length ? "UNSUPPORTED_FLOW" : "OWNER_MISMATCH", operation);
+    }
     const data = object(await json(this.transport, this.path("AppointmentOrderAPI", "v1", `visits/${encodeURIComponent(appointmentId)}`), operation), operation);
     assertRecordOwner(data, this.owner, operation);
     for (const field of ["member_id", "member_id_code", "visit_summary_date", "service_provider_name", "visit_summary_pdf_link"]) string(data[field], operation);

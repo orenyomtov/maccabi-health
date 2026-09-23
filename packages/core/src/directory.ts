@@ -1,7 +1,7 @@
 import { load } from "cheerio/slim";
 import { createHash, randomUUID } from "node:crypto";
 import { MaccabiError, UpstreamError } from "./errors";
-import { readResponseBody, type FetchFunction } from "./transport";
+import { readResponseBody, USER_AGENT, type FetchFunction } from "./transport";
 import type { ReadResult } from "./readers";
 import { projectDirectoryDetails, type DirectoryProviderDetails } from "./directory-detail";
 export type { DirectoryProviderDetails } from "./directory-detail";
@@ -221,7 +221,7 @@ export class MaccabiDirectory {
     try {
       response = await this.#fetch(url, {
         method: body ? "POST" : "GET", credentials: "omit", redirect: "manual",
-        headers: body ? { Accept: mime, "Content-Type": "application/json" } : { Accept: mime },
+        headers: { "User-Agent": USER_AGENT, Accept: mime, ...(body ? { "Content-Type": "application/json" } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(this.#timeoutMs),
       });
     } catch (error) {

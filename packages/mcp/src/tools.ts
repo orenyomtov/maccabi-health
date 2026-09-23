@@ -353,11 +353,11 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
     try { return output(await action(options.createDirectory?.() ?? new MaccabiDirectory({ fetch: options.fetch }))); }
     catch (error) {
       if (error instanceof OutputLimit) return errorResult("RESULT_TOO_LARGE", "Use the local CLI for this public directory result; no result was silently shortened.");
-      if (error instanceof MaccabiError && error.code === "DIRECTORY_CONFIGURATION_UNAVAILABLE") return errorResult(error.code, "The public site did not supply the expected search configuration. Check the official doctor directory in your browser; no search was submitted.");
-      return errorResult(error instanceof MaccabiError ? error.code : "DIRECTORY_REQUEST_FAILED", "Public directory request failed. Use a current field from maccabi_directory_specialties for this category and check connectivity. No account session was used.");
+      if (error instanceof MaccabiError && error.code === "DIRECTORY_CONFIGURATION_UNAVAILABLE") return errorResult(error.code, "The public directory host served a bot-challenge page instead of the site. This affects all public-directory reads, is scored per request rather than fixed, and is not something this client can reliably get past. Use the official directory in a browser; no search was submitted and no account session was involved.");
+      return errorResult(error instanceof MaccabiError ? error.code : "DIRECTORY_REQUEST_FAILED", "Public directory request failed. The usual cause is the host's bot challenge, which answers programmatic clients with a challenge page and cannot be reliably got past; otherwise use a current field from maccabi_directory_specialties for this category and check connectivity. No account session was used.");
     }
   }
-  /** The one call that replaces reading 42 tool names and guessing how they fit together. */
+  /** The one call that replaces reading 38 tool names and guessing how they fit together. */
   function capabilities(): unknown {
     return {
       server: { name: "maccabi-health", version, transport: browserLogin ? "http" : "stdio" },
@@ -671,10 +671,15 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
   }, a => withOwner(async r => documentResult(await (a.document === "latest_labs" ? reports.latest_labs(r, a.irregular_only) : reports[a.document](r)))));
 
   // ---- Owner reads. Every list row carries the `ref` the two resolvers above take.
-  register("maccabi_profile", "Read the signed-in member's own name, sex and date of birth. The national ID and upstream credentials are excluded. Use this to confirm whose record the rest of these tools are reading.", z.object({}).strict(), async r => r.getOwnerProfile());
-  register("maccabi_contact_details", "Read the member's own email address, phone numbers and postal address as Maccabi holds them. No family data, no directory lookup, no update.", z.object({}).strict(), async r => r.getOwnerContactProfile());
-  register("maccabi_authorized_users", "Read who else is authorized to view this Maccabi account, with their names, identification numbers and authorization end dates, plus whether a new authorization can currently be created. Observed state was creation-available; populated users are source-backed and offline-tested. It grants, extends and revokes nothing, and it does not switch the account being read.", z.object({}).strict(), async r => r.listAccountAccess());
-  register("maccabi_notification_settings", "Read which notification groups, services and channels the member is registered for, which are restricted, and the contact fields they would be sent to. This is the settings page, not the messages: for the letters and mailings themselves use maccabi_mailings. Browser response observed, getter tested offline. It saves nothing and applies nothing to family members.", z.object({}).strict(), async r => r.getNotificationPreferences());
+  const accountSections = {
+    profile: (r: ReaderOperations) => r.getOwnerProfile(),
+    contact_details: (r: ReaderOperations) => r.getOwnerContactProfile(),
+    authorized_users: (r: ReaderOperations) => r.listAccountAccess(),
+    notification_settings: (r: ReaderOperations) => r.getNotificationPreferences(),
+    payment_methods: (r: ReaderOperations) => r.getPaymentMethods(),
+  };
+  register("maccabi_account", "Read one section of the signed-in member's own account record; `section` says which. `profile` is their name, sex and date of birth, which is how you confirm whose record the rest of these tools are reading. `contact_details` is the email address, phone numbers and postal address Maccabi holds. `authorized_users` is who else may view this account, with their names, identification numbers and authorization end dates, plus whether a new authorization can currently be created. `notification_settings` is which notification groups, services and channels the member is registered for, which are restricted, and the contact fields they would be sent to - the settings page, not the messages, which are maccabi_mailings. `payment_methods` is the payment-authorization summary with the bank, card type and last four digits the source shows. The member's national ID, the upstream credentials and full account numbers are excluded, and there is no family data or directory lookup here. The observed account-access state was creation-available; populated authorized users and the notification read are source-backed and offline-tested. Every section is a read: nothing is saved, granted, extended, revoked or paid, nothing is applied to a family member, and the account being read is never switched. For the payer account's outstanding totals use maccabi_payer_account_totals.",
+    z.object({ section: z.enum(Object.keys(accountSections) as [keyof typeof accountSections, ...(keyof typeof accountSections)[]]) }).strict(), async (r, a) => accountSections[a.section](r));
   register("maccabi_medical_recommendations", "Read the recommendation text and table from the legacy medical-recommendations page, in the source's own clinical wording. Only the one captured single-section layout is supported, and this is not a complete history of recommendations.", z.object({}).strict(), r => r.getMedicalRecommendations());
   register("maccabi_medical_summary", "Read the legacy summary page that pairs selected medications with selected laboratory results, as text and tables in the source's wording. This is neither a complete medical history nor the English medical summary PDF, which maccabi_report returns.", z.object({}).strict(), r => r.getSelectedMedicalSummary());
   register("maccabi_hospital_visits", "List hospital and emergency-room admissions. `as_of` is required and anchors the lookback the source page applies (three years in the captured settings); an optional paired from/to narrows it and must end no later than as_of. Rows carry a `ref` for maccabi_document, which returns the admission's original report. Retention beyond the lookback is unverified.",
@@ -685,7 +690,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
       const paged = page(result, a, row => { const reference = text(row.reference); return reference === undefined ? undefined : encodeRef("hospital_report", { reference, as_of: a.as_of, ...dates }); });
       return withNext(paged, [...nextPage("maccabi_hospital_visits", { as_of: a.as_of, ...dates }, paged, a.limit), ...documentStep(paged, "The original report for one admission.")]);
     });
-  register("maccabi_mailings", "List the letters, status notices and tutorials Maccabi sent the member, in a required date range. Type 1 is a letter and type 2 a status notice, each with a `reference`; type 3 is a set of tutorials whose PDFs are the tutorials[].pdf_reference values. Rows carry a `ref` for maccabi_document; for a type-3 row pass one of its tutorial references as `reference` as well. Webpage and video links are returned without being fetched. For the notification settings page use maccabi_notification_settings. Types 2 and 3 are source-backed and offline-tested. No mark-read.",
+  register("maccabi_mailings", "List the letters, status notices and tutorials Maccabi sent the member, in a required date range. Type 1 is a letter and type 2 a status notice, each with a `reference`; type 3 is a set of tutorials whose PDFs are the tutorials[].pdf_reference values. Rows carry a `ref` for maccabi_document; for a type-3 row pass one of its tutorial references as `reference` as well. Webpage and video links are returned without being fetched. For the notification settings page use maccabi_account with section=notification_settings. Types 2 and 3 are source-backed and offline-tested. No mark-read.",
     z.object({ ...pageShape, from: date, to: date }).strict().refine(a => a.from <= a.to, { message: "from must not be later than to" }),
     async (r, a) => {
       const result = await r.listNotifications({ from: a.from, to: a.to });
@@ -813,7 +818,6 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
       return withNext({ ...result, data: { ...result.data, reports: reportRows } },
         first ? [{ tool: "maccabi_document", arguments: { ref: first }, why: "The original annual nursing-insurance report PDF." }] : []);
     });
-  register("maccabi_payment_methods", "Read how the member's Maccabi charges are paid: the payment-authorization summary with the bank, card type and last four digits the source shows. Full account numbers and credentials are omitted. Nothing about the authorization is changed.", z.object({}).strict(), r => r.getPaymentMethods());
   register("maccabi_billing_reports", "Read the catalog of quarterly billing reports, with the periods available, the period currently selected, and each report's production date and view label. Each report carries a `ref` for maccabi_document, which returns the original quarterly PDF and already knows which period it belongs to. Optional `period` must exactly match one of the source page's own availablePeriods values. This is the catalog's first page, not itemized charges.",
     z.object({ period: z.string().regex(/^\d{1,4}$/, "Use an exact value from availablePeriods").optional() }).strict(), async (r, a) => {
       const result = await r.listQuarterlyBillingReports(a.period);
@@ -823,7 +827,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
       return withNext({ ...result, data: { ...result.data, reports: reportRows } },
         first ? [{ tool: "maccabi_document", arguments: { ref: first }, why: "The original quarterly billing report PDF for this period." }] : []);
     });
-  register("maccabi_payer_account_totals", "Read the outstanding totals for the payer account this member belongs to, from the source's fixed other-payer branch. These are account-level figures labeled source.scope=payer-account-aggregate: they are not this member's personal debt, and the source attributes neither an individual debtor nor a currency. Do not present them as what the member owes. No payment is made.", z.object({}).strict(), r => r.getOutstandingDebt());
+  register("maccabi_payer_account_totals", "Read the outstanding totals for the payer account this member belongs to, from the source's fixed other-payer branch. These are account-level figures labeled source.scope=payer-account-aggregate: they are not this member's personal debt, and the source attributes neither an individual debtor nor a currency. Do not present them as what the member owes. For how this member's own charges are paid, use maccabi_account with section=payment_methods. No payment is made.", z.object({}).strict(), r => r.getOutstandingDebt());
   register("maccabi_doctor_inquiries", "List the medical inquiries the member sent to a doctor or clinic office, with their status. These are clinical questions and their answers, not reimbursement or approval paperwork - that is maccabi_administrative_requests. Each row carries a `ref` for maccabi_detail, which reads the patient and clinician text. An automatic_sick_permit row is list-only: its document is the row's own pdf_reference, passed to maccabi_document as `reference`. Nothing is submitted, cancelled, answered or marked read.",
     z.object(pageShape).strict(), async (r, a) => {
       const result = await r.listInquiries();
@@ -840,11 +844,12 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
     z.object(pageShape).strict(), async (r, a) => {
       const result = await r.listVisits();
       const paged = page(result, a, row => { const appointment = text(row.appointment_id); return appointment === undefined ? undefined : encodeRef("visit", { appointment_id: appointment }); });
-      const first = firstRef(paged);
+      // Only a has_summery_file row has a detail the source will serve, so suggesting any other
+      // row would hand the caller a ref that cannot be redeemed.
       const withSummary = paged.data.find(row => row.has_summery_file === true)?.ref;
       return withNext(paged, [
         ...nextPage("maccabi_past_visits", {}, paged, a.limit),
-        ...(first ? [{ tool: "maccabi_detail", arguments: { ref: first }, why: "The visit's detail and the pdf_reference of each document attached to it." }] : []),
+        ...(withSummary ? [{ tool: "maccabi_detail", arguments: { ref: withSummary }, why: "The visit's detail and the pdf_reference of each document attached to it." }] : []),
         ...(withSummary ? [{ tool: "maccabi_document", arguments: { ref: withSummary }, why: "The visit-summary PDF of a row whose has_summery_file is true." }] : []),
       ]);
     });

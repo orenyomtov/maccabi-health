@@ -27,7 +27,7 @@ describe("official SDK stdio integration", () => {
     try {
       // Counts the built dist/, so it fails until a rebuild picks up new tools. Guards against
       // accidentally dropping tools from the stdio surface, which registers the login pair too.
-      expect((await h.client.listTools()).tools.length).toBe(42);
+      expect((await h.client.listTools()).tools.length).toBe(38);
       expect(JSON.stringify(await h.client.readResource({ uri: COVERAGE_URI }))).toContain("complete historical");
       expect(h.stderr()).toBe("");
     } finally { await h.client.close(); }
@@ -36,7 +36,7 @@ describe("official SDK stdio integration", () => {
     for (const modern of [false, true]) {
       const h = await subprocess("packages/mcp/test/fixtures/stdio-server.ts", modern);
       try {
-        const profile = await h.client.callTool({ name: "maccabi_profile", arguments: {} });
+        const profile = await h.client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
         expect((profile as any).structuredContent.data.f_name_hebrew).toBe("דוגמה");
         expect(JSON.stringify(profile)).not.toContain("synthetic-upstream-token");
         expect(JSON.stringify(profile)).not.toContain("123456789");
@@ -220,7 +220,7 @@ describe("stdio background session renewal", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport); await client.connect(clientTransport);
     try {
-      const answer = await client.callTool({ name: "maccabi_profile", arguments: {} });
+      const answer = await client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
       expect((answer as any).isError).not.toBe(true);
       expect((answer as any).structuredContent.data.f_name_hebrew).toBe("דוגמה");
     } finally { await client.close(); await server.close(); renewal.stop(); }

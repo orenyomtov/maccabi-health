@@ -45,7 +45,7 @@ maccabi prescriptions --json | jq '.data | length'
 maccabi referrals --json | jq '.data[] | {referral_date, displaying_name}'
 ```
 
-This is usually the better surface for Claude Code, Codex, Cursor's agent and anything else with a bash tool. Bare `maccabi` prints a one-line-per-command index of about 5 KB; the MCP server's 42 tool schemas are about 35 KB before the agent does anything, and per-command help is smaller again (`maccabi help labs` is 1.4 KB). Beyond the size, JSON coming out of a pipe is something an agent can already filter, loop over and diff without learning a tool inventory.
+This is usually the better surface for Claude Code, Codex, Cursor's agent and anything else with a bash tool. Bare `maccabi` prints a one-line-per-command index of about 5 KB; the MCP server's 38 tool schemas are about 33 KB before the agent does anything, and per-command help is smaller again (`maccabi help labs` is 1.4 KB). Beyond the size, JSON coming out of a pipe is something an agent can already filter, loop over and diff without learning a tool inventory.
 
 The tradeoff: the CLI is a new process per command, so there is no persistent session state, discovery costs one extra round trip, and the agent needs permission to run a binary at all. Where none of that is available (Claude Desktop, hosted assistants, anything without a shell), the MCP server is the right surface, and the next section covers it.
 
@@ -94,7 +94,7 @@ If the server does not show up, it is almost always `spawn npx ENOENT`: GUI apps
 
 Create `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (this project) with the standard config plus `"type": "stdio"`.
 
-Cursor caps the agent at roughly 40 tools across every enabled server, and this one exposes 42. Enable it on its own, expect Cursor to quietly drop some tools, or use the CLI instead. Cursor's agent has a shell.
+Cursor caps the agent at roughly 40 tools across every enabled server, and this one exposes 38. It fits on its own, but only just: enable anything else alongside it and Cursor may quietly drop tools, with no error. Enable it alone, or use the CLI instead. Cursor's agent has a shell.
 </details>
 
 <details>

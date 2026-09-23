@@ -229,7 +229,7 @@ describe("browser authorization", () => {
     const client = await connectClient(handle, accessToken);
     const { tools } = await client.listTools();
     // Two fewer than stdio: the browser leg replaces maccabi_login_start and maccabi_login_verify.
-    expect(tools).toHaveLength(40);
+    expect(tools).toHaveLength(36);
     expect(tools.map(tool => tool.name)).not.toContain("maccabi_login_start");
     expect(tools.map(tool => tool.name)).not.toContain("maccabi_login_verify");
   });
@@ -391,7 +391,7 @@ describe("per-member isolation", () => {
 
     for (const token of [first.accessToken, second.accessToken]) {
       const client = await connectClient(handle, token, `isolation-${token.slice(0, 6)}`);
-      await client.callTool({ name: "maccabi_profile", arguments: {} });
+      await client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
     }
     // Each token resolved its own member's saved session, never the other's.
     expect(owners).toEqual([Number(MEMBER).toString(), Number(OTHER_MEMBER).toString()]);
@@ -448,7 +448,7 @@ describe("per-member isolation", () => {
     const client = await connectClient(handle, first.accessToken, "serial");
     // The SDK builds a new server per HTTP request, so the executor has to outlive the factory;
     // without that, overlapping calls each get their own mutex and race over the session file.
-    const responses = await Promise.all([0, 1, 2].map(() => client.callTool({ name: "maccabi_profile", arguments: {} })));
+    const responses = await Promise.all([0, 1, 2].map(() => client.callTool({ name: "maccabi_account", arguments: { section: "profile" } })));
     expect(resolved).toBe(3);
     expect(peak).toBe(1);
     for (const response of responses) {
@@ -458,7 +458,7 @@ describe("per-member isolation", () => {
     active = 0; peak = 0;
     const second = await tokenFor(handle, { memberId: OTHER_MEMBER });
     const other = await connectClient(handle, second.accessToken, "serial-other");
-    await Promise.all([client.callTool({ name: "maccabi_profile", arguments: {} }), other.callTool({ name: "maccabi_profile", arguments: {} })]);
+    await Promise.all([client.callTool({ name: "maccabi_account", arguments: { section: "profile" } }), other.callTool({ name: "maccabi_account", arguments: { section: "profile" } })]);
     // One queue per member: a second member's read never waits behind the first member's.
     expect(peak).toBe(2);
   });
@@ -475,7 +475,7 @@ describe("re-authorization loop", () => {
     expect(await readdir(join(configDir, "sessions"))).toHaveLength(1);
 
     const client = await connectClient(handle, accessToken, "reauth");
-    const response = await client.callTool({ name: "maccabi_profile", arguments: {} });
+    const response = await client.callTool({ name: "maccabi_account", arguments: { section: "profile" } });
     const error = (response as { structuredContent?: { error: { code: string; instruction: string } } }).structuredContent!.error;
     expect(error.code).toBe("REAUTHENTICATION_REQUIRED");
     expect(error.instruction).toContain("The access token has been revoked");
