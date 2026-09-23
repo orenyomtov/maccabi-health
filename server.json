@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.orenyomtov/maccabi-health",
+  "description": "Read your own Maccabi Healthcare records: labs, prescriptions, visits, referrals, PDFs.",
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/orenyomtov/maccabi-health#readme",
+  "repository": {
+    "url": "https://github.com/orenyomtov/maccabi-health",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "maccabi-health",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        { "type": "positional", "value": "mcp", "valueHint": "subcommand" }
+      ]
+    }
+  ]
+}

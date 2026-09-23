@@ -1,0 +1,22 @@
+{
+  "name": "@maccabi/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared source-backed Maccabi account client used by the CLI and MCP server.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orenyomtov/maccabi-health.git",
+    "directory": "packages/core"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "entities": "8.1.0",
+    "tough-cookie": "6.0.2",
+    "cheerio": "1.2.0"
+  }
+}

@@ -1,0 +1,43 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment, credentials, and authentication state
+.env
+.env.*
+!.env.example
+credentials/
+secrets/
+auth-sessions/
+sessions/
+*.cookie
+*.cookies
+
+# Private browser and network captures
+captures/
+browser-captures/
+network-captures/
+*.har
+*.pcap
+*.pcapng
+
+# Personal health data and exports
+private/
+health-exports/
+medical-exports/
+exports/
+
+# Logs and local tooling
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+
+# Internal research, handoffs, local tooling, and archived documentation
+/.internal/
+
+# Compatibility symlink into ignored /.internal/ for an existing watcher; keep the link, do not ship it
+/docs/research/fixtures

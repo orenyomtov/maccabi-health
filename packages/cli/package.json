@@ -1,0 +1,23 @@
+{
+  "name": "@maccabi/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private-terminal CLI for the personal Maccabi integration.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orenyomtov/maccabi-health.git",
+    "directory": "packages/cli"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "type": "module",
+  "exports": {
+    "./store": "./src/store.ts",
+    "./login": "./src/login.ts"
+  },
+  "dependencies": {
+    "@maccabi/core": "0.1.0"
+  }
+}

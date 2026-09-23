@@ -1,0 +1,86 @@
+{
+  "name": "maccabi-health",
+  "version": "0.1.0",
+  "description": "Node.js library, CLI, and MCP server for Maccabi Healthcare records.",
+  "mcpName": "io.github.orenyomtov/maccabi-health",
+  "keywords": [
+    "maccabi",
+    "maccabi4u",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "modelcontextprotocol",
+    "health-records",
+    "healthcare",
+    "israel",
+    "cli",
+    "library"
+  ],
+  "license": "MIT",
+  "author": "Oren Yomtov (https://github.com/orenyomtov)",
+  "homepage": "https://github.com/orenyomtov/maccabi-health#readme",
+  "bugs": {
+    "url": "https://github.com/orenyomtov/maccabi-health/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orenyomtov/maccabi-health.git"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "prepack": "npm run build",
+    "cli": "node dist/cli.js",
+    "mcp:local": "node dist/cli.js mcp",
+    "mcp:http": "node dist/cli.js mcp --http",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test",
+    "pretest": "npm run build"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "typescript": "7.0.2",
+    "tsdown": "0.23.0",
+    "@types/node": "24.13.6",
+    "vitest": "5.0.1",
+    "tsx": "4.23.15"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    }
+  },
+  "bin": {
+    "maccabi": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "docs/*.md",
+    "README.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "4.6.5",
+    "tough-cookie": "6.0.2",
+    "entities": "8.1.0",
+    "cheerio": "1.2.0",
+    "@modelcontextprotocol/node": "2.0.0"
+  }
+}
