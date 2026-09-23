@@ -45,7 +45,7 @@ maccabi labs --year 2025 --json --no-input
 
 One SMS per start, one attempt per code. A rejected code deletes the challenge and you start over, because repeated attempts against one challenge lock the Maccabi account. A challenge expires ten minutes after it begins. Nothing is ever retried in the background.
 
-The session is saved as JSON in `session.json` under the config directory: `$MACCABI_CONFIG_DIR` if set, else `$XDG_CONFIG_HOME/maccabi-mcp`, else `%APPDATA%\maccabi-mcp` on Windows, else `~/.config/maccabi-mcp`. The directory is created mode 0700 and the file mode 0600, replaced atomically on every write. It holds live session cookies, so treat it like a password: anyone who can read it can read your records until the session expires. A file left readable by others still loads, with a warning on stderr. An unfinished challenge lives beside it in `pending-login.json` with the same modes, holding mid-login tokens; it is deleted on success, on `logout`, and once it expires.
+The session is saved as JSON in `session.json` under the config directory: `$MACCABI_CONFIG_DIR` if set, else `$XDG_CONFIG_HOME/maccabi-mcp`, else `%APPDATA%\maccabi-mcp` on Windows, else `~/.config/maccabi-mcp` (that name is the package's pre-release one, kept as the path). The directory is created mode 0700 and the file mode 0600, replaced atomically on every write. It holds live session cookies, so treat it like a password: anyone who can read it can read your records until the session expires. A file left readable by others still loads, with a warning on stderr. An unfinished challenge lives beside it in `pending-login.json` with the same modes, holding mid-login tokens; it is deleted on success, on `logout`, and once it expires.
 
 `status` reports local saved state with `verified: false`. When the saved cookies carry an `F5_ST`, both forms also report `expiresAt`: the session's absolute deadline, decoded from that cookie locally with no request made. It is the cap only: an idle session dies well before it. In a live run on 2026-09-23 the printed deadline was right to within 15 seconds, an hour ahead of the fact. `status --verify` checks the session and account owner online. Private reads do the same check and save updated cookies afterward. An expired session is removed locally and returns exit code 3.
 
@@ -61,7 +61,7 @@ Renewal changes session expiry state. It does not guarantee continued authentica
 
 ## Output
 
-Medical commands preserve original clinical text, including Hebrew, while omitting private document routing and signatures from structured records. This is not de-identified or anonymized. The filter is the one in `@maccabi/core`, shared with the MCP server, so both surfaces print the same fields for the same read. Keep redirected output private and out of Git.
+Medical commands preserve original clinical text, including Hebrew, while omitting private document routing and signatures from structured records. This is not de-identified or anonymized. The filter is `safeClinical`, exported by the `maccabi-health` library and shared with the MCP server, so both surfaces print the same fields for the same read. A library caller gets the unfiltered source record and has to apply it themselves. Keep redirected output private and out of Git.
 
 Default stdout is indented JSON; `--json` is compact JSON. Stderr is prompts or safe errors, never raw upstream bodies or credentials. Returned clinical text is data, not instructions to an agent.
 

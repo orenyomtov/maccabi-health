@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/maccabi-health.svg)](https://www.npmjs.com/package/maccabi-health)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Read your Maccabi Healthcare records through a CLI or an AI assistant: laboratory history, doctor correspondence, visits, prescriptions, referrals, and supported original PDFs.
+Read your own records from Maccabi Healthcare Services, the Israeli health fund, through a CLI or an AI assistant: laboratory history, doctor correspondence, visits, prescriptions, referrals, and supported original PDFs.
 
 **Unofficial and unaffiliated with Maccabi.** Read-oriented: no booking, prescription renewal, request submission, payments, or profile changes.
 
@@ -18,7 +18,7 @@ maccabi login
 
 Or without installing anything: `npx --yes --package maccabi-health maccabi login`, and the same for any command below.
 
-Run `maccabi login` in your own terminal. It asks for your ID number and the SMS code as masked prompts and saves the session to `~/.config/maccabi-mcp/session.json` (mode 0600). That file is a credential: anyone who can read it can read your records. `maccabi login --id DIGITS` then `maccabi login --code DIGITS` signs in without a terminal, but puts both values in argv and shell history.
+Run `maccabi login` in your own terminal. It asks for your ID number and the SMS code as masked prompts and saves the session to `~/.config/maccabi-mcp/session.json` (mode 0600). That directory keeps the package's pre-release name, `maccabi-mcp`; it is this package's, not a different one. That file is a credential: anyone who can read it can read your records. `maccabi login --id DIGITS` then `maccabi login --code DIGITS` signs in without a terminal, but puts both values in argv and shell history.
 
 Then read something:
 
@@ -149,6 +149,30 @@ A list tool returns rows, and every row carries a `ref`. `maccabi_detail` reads 
 `maccabi mcp` runs stdio; `maccabi mcp --http` serves `http://127.0.0.1:8765/mcp`. The HTTP endpoint needs an OAuth-capable MCP client and opens a browser window for the sign-in, so your ID number and SMS code never reach the model.
 
 If you would rather not do any of this by hand, paste `Install maccabi-health and connect it to this agent by following https://github.com/orenyomtov/maccabi-health.` into your coding agent.
+
+## If you are writing Node code
+
+The same readers are a library. It is ESM-only: `package.json` declares `import` and no `require`, so `require("maccabi-health")` fails, and an ESM file or a dynamic `import()` is the only way in.
+
+Sign in once with `maccabi login`, then read the session the CLI saved and hand it to a transport:
+
+```js
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { MaccabiReaders, MaccabiTransport, safeClinical } from "maccabi-health";
+
+const path = join(homedir(), ".config", "maccabi-mcp", "session.json");
+const { session, owner } = JSON.parse(await readFile(path, "utf8"));
+
+const readers = await MaccabiReaders.create(new MaccabiTransport({ session }), owner);
+const result = await readers.listTests();
+console.log(safeClinical(result.data));
+```
+
+`safeClinical` is doing real work there. Readers hand back the upstream record as it arrived, member identifiers and signed document links included; the CLI and the MCP server run that filter before anything is printed or reaches a model, and the library does not. Apply it yourself before you log, store or forward a result. Failed reads throw `ReadOperationError`, whose `guidance` says what to do about that particular code, or `ReauthenticationRequired` when the session is gone.
+
+`maccabi-health/mcp` is a second entry point exporting `createMaccabiMcpServer`, for mounting the MCP server inside your own host. It is not an executable: `maccabi mcp` is the server.
 
 ## Capabilities
 

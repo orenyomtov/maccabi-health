@@ -33,6 +33,8 @@ Every file below lives in the config directory, resolved in this order:
 3. `%APPDATA%\maccabi-mcp` on Windows
 4. `~/.config/maccabi-mcp`
 
+The directory is named `maccabi-mcp` because that is what this package was called before release. It belongs to `maccabi-health`; nothing else writes there. Set `MACCABI_CONFIG_DIR` if you want it somewhere else.
+
 The directory is created mode `0700`. Every file is written mode `0600`, created at that mode rather than chmod'ed afterwards, and swapped in with `rename`, so no truncated or world-readable version is ever observable, even if the process dies mid-write. On load, a file whose mode has any group or other bits set prints a warning to stderr.
 
 The temporary file each write swaps in is named with a fresh UUID, so concurrent writes never share a path. They used to be named after the process ID, which meant two writes in one process collided on the exclusive create and the loser's cleanup deleted the winner's file before it could be renamed. Three overlapping writes could leave no session file at all. A failed write now only ever unlinks the temporary file it created itself; it never touches the real file, so a previously saved session survives intact.

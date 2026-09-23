@@ -6,7 +6,9 @@
  * wrong for anything that prints, logs or ships a result: an MCP client keeps tool output in model
  * context, and the CLI writes it to a terminal, a shell scrape or whatever `--json` is piped into.
  * Both surfaces need the same filter, so it lives here rather than in one of them, where the two
- * copies would drift the moment either side learned about a new field.
+ * copies would drift the moment either side learned about a new field. It is exported from the
+ * published entry for the same reason: a library caller who logs or forwards a read result has
+ * exactly the same problem, and a third copy would drift too.
  */
 const omittedKeys = new Set([
   "memberid", "memberidcode", "patientid", "patientidcode", "membertechnicalid", "loggedcustomerinfo", "currentcustomerinfo", "familydata", "authorizationtoaccount",
