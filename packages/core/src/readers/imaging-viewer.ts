@@ -12,7 +12,7 @@
  * captured session of one single-frame ultrasound study, so the arithmetic is written to be general
  * and to fail loudly rather than to assume that study's numbers.
  */
-import { IMAGING_HANDOFF_PATH, LOGIN_ORIGIN, PORTAL_ORIGIN, VIEWER_ORIGIN, readResponseBody, type TransportRequestInit } from "../transport";
+import { IMAGING_HANDOFF_PATH, LOGIN_ORIGIN, PORTAL_ORIGIN, VIEWER_ORIGIN, discard, readResponseBody, type TransportRequestInit } from "../transport";
 
 export interface ViewerTransport {
   request(input: string | URL, init?: TransportRequestInit): Promise<Response>;
@@ -158,9 +158,6 @@ export function formInputs(html: string): Map<string, string> {
   return inputs;
 }
 
-async function discard(response: Response): Promise<void> {
-  try { await response.body?.cancel(); } catch { /* an already-consumed or errored body is not a failure */ }
-}
 /** Reads Location without following it, because at two hops it holds the only copy of a value. */
 async function redirectTarget(response: Response, base: URL | string, origin: string, pathname?: string): Promise<URL> {
   await discard(response);

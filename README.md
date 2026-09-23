@@ -1,7 +1,7 @@
 # Maccabi Health
 
 [![npm](https://img.shields.io/npm/v/maccabi-health.svg)](https://www.npmjs.com/package/maccabi-health)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/orenyomtov/maccabi-health/blob/main/LICENSE)
 
 Read your own records from Maccabi Healthcare Services, the Israeli health fund, through a CLI or an AI assistant: laboratory history, doctor correspondence, visits, prescriptions, referrals, and supported original PDFs.
 
@@ -144,7 +144,7 @@ Some clients cannot spawn `npx` directly on Windows, because it is a `.cmd` shim
 
 Once it is connected, ask your assistant for cholesterol history with dates, units and ranges, for doctor notes and their replies, or for a referral and its available documents.
 
-A list tool returns rows, and every row carries a `ref`. `maccabi_detail` reads the record behind one and `maccabi_document` returns its original PDF. Every result carries a `next` list naming the calls that follow it, arguments already filled in. `maccabi_capabilities` describes the whole surface in one call. [MCP transports](docs/MCP.md) covers stdio, the loopback HTTP endpoint and the tool surface in full.
+A list tool returns rows, and every row carries a `ref`. `maccabi_detail` reads the record behind one and `maccabi_document` returns its original PDF. Every result carries a `next` list naming the calls that follow it, arguments already filled in. `maccabi_capabilities` describes the whole surface in one call. [MCP transports](https://github.com/orenyomtov/maccabi-health/blob/main/docs/MCP.md) covers stdio, the loopback HTTP endpoint and the tool surface in full.
 
 `maccabi mcp` runs stdio; `maccabi mcp --http` serves `http://127.0.0.1:8765/mcp`. The HTTP endpoint needs an OAuth-capable MCP client and opens a browser window for the sign-in, so your ID number and SMS code never reach the model.
 
@@ -185,12 +185,12 @@ console.log(safeClinical(result.data));
 | Billing | Quarterly reports and report PDFs |
 | Other reads | Certificates, notifications, settings and public provider search |
 
-See the [full capability reference](docs/CAPABILITIES.md) for commands and supported branches.
+See the [full capability reference](https://github.com/orenyomtov/maccabi-health/blob/main/docs/CAPABILITIES.md) for commands and supported branches.
 
 ## Something not working?
 
 If a read fails, a record is missing, the output looks wrong, or you want something this cannot do yet, [open an issue](https://github.com/orenyomtov/maccabi-health/issues). Say which command or MCP tool you used and quote the error code. The errors themselves tell you when a failure is this package's fault rather than yours.
 
-Never paste medical records, ID numbers, cookies or session files into an issue. Security problems go through the private route in [SECURITY.md](SECURITY.md), not the issue tracker.
+Never paste medical records, ID numbers, cookies or session files into an issue. Security problems go through the private route in [SECURITY.md](https://github.com/orenyomtov/maccabi-health/blob/main/SECURITY.md), not the issue tracker.
 
-[Authentication](docs/AUTH.md) · [CLI guide](docs/CLI.md) · [MCP transports](docs/MCP.md) · [API sources](docs/API-SOURCES.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
+[Authentication](https://github.com/orenyomtov/maccabi-health/blob/main/docs/AUTH.md) · [CLI guide](https://github.com/orenyomtov/maccabi-health/blob/main/docs/CLI.md) · [MCP transports](https://github.com/orenyomtov/maccabi-health/blob/main/docs/MCP.md) · [API sources](https://github.com/orenyomtov/maccabi-health/blob/main/docs/API-SOURCES.md) · [Contributing](https://github.com/orenyomtov/maccabi-health/blob/main/CONTRIBUTING.md) · [MIT license](https://github.com/orenyomtov/maccabi-health/blob/main/LICENSE)

@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import {
   bearerAuthChallengeResponse, createMcpHandler, getOAuthProtectedResourceMetadataUrl, oauthMetadataResponse,
@@ -114,7 +114,7 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
     createAuth: upstream.createAuth, connect: upstream.connect,
   });
 
-  const server = createServer((request, response) => {
+  const serve = (request: IncomingMessage, response: ServerResponse): void => {
     if (!validateHost(request, response)) return;
     if (!live) { response.writeHead(503, { "cache-control": "no-store" }); response.end(); return; }
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? LOCAL_HTTP_HOST}`);
@@ -142,6 +142,21 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
         return nodeHandler(request, response);
       })
       .catch(error => writeWebResponse(response, bearerAuthChallengeResponse(error, challenge)));
+  };
+
+  // This callback is the outermost frame of an HTTP request, so anything that escapes it is an
+  // uncaughtException and takes the whole server down. Node's HTTP parser accepts request targets and
+  // methods that the WHATWG constructors above refuse — `GET //%/mcp`, which any web page can reach
+  // with a plain URL, makes `new URL` throw, and `TRACE` on a discovery path makes `new Request`
+  // throw — so a malformed request has to be answered here rather than thrown.
+  const server = createServer((request, response) => {
+    try { serve(request, response); }
+    catch {
+      process.stderr.write("Maccabi MCP HTTP request could not be read.\n");
+      if (response.headersSent) { response.end(); return; }
+      response.writeHead(400, { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" });
+      response.end("Bad request.\n");
+    }
   });
 
   const requestedPort = options.port ?? LOCAL_HTTP_PORT;

@@ -103,8 +103,25 @@ describe("observed ID/SMS/SAML flow", () => {
     const challenge = await auth.beginLogin("012345678");
     const before = calls.length;
     await expect(auth.requestOtp(challenge.id, 1)).rejects.toMatchObject({ code: "INVALID_PHONE_CHOICE" });
-    await expect(auth.completeLogin(challenge.id, "abc123")).rejects.toMatchObject({ code: "INVALID_OTP_FORMAT" });
+    // Six digits exactly. Maccabi allows one attempt per code and locks the account on a wrong one, so
+    // a mistyped length has to die here rather than be spent upstream; "abc123" alone would still pass
+    // a check that had been widened to any run of digits.
+    for (const otp of ["abc123", "12345", "1234567", "1234", "", "12345 ", "١٢٣٤٥٦"]) {
+      await expect(auth.completeLogin(challenge.id, otp)).rejects.toMatchObject({ code: "INVALID_OTP_FORMAT" });
+    }
     expect(calls.length).toBe(before);
+  });
+
+  /** The retention window closes at the boundary, not one tick after it. */
+  test("a challenge is already expired at the instant its retention window ends", async () => {
+    let now = 0;
+    const { auth, calls } = fixture({ now: () => now });
+    const challenge = await auth.beginLogin("012345678");
+    const count = calls.length;
+    now = 10 * 60_000;
+    await expect(auth.requestOtp(challenge.id)).rejects.toMatchObject({ code: "LOGIN_CHALLENGE_EXPIRED" });
+    // Expiry is local retention, so it must not have cost an SMS on the way out.
+    expect(calls).toHaveLength(count);
   });
 
   test("exact duplicate masked phone entries become one choice with the original upstream index", async () => {

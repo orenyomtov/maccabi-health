@@ -256,6 +256,19 @@ describe("what leaves the process", () => {
     expect(safe.photometricInterpretation).toBe("MONOCHROME2");
   });
 
+  test("the filter hands binary back untouched instead of rewriting it byte by byte", async () => {
+    // safeClinical is exported for library callers, and a pixel or PDF read result is a Uint8Array.
+    // Walking it as a record turned 2 MiB of document into a two-million-key object and spent close
+    // to a second doing it, which is not a filter doing anything - binary carries no named fields.
+    const { readers } = await connect(new Chain());
+    const pixels = (await readers.getImagingImagePixels(fixture.STUDY_UID, fixture.SERIES_UID, fixture.SOP_UID)).data;
+    const safe = safeClinical(pixels) as { pixels: Uint8Array };
+    expect(safe.pixels).toBe(pixels.pixels);
+    expect(safeClinical(pixels.pixels)).toBe(pixels.pixels);
+    // Named fields beside the bytes are still filtered exactly as before.
+    expect(safeClinical({ token: "secret", bytes: pixels.pixels, rows: 1 })).toEqual({ bytes: pixels.pixels, rows: 1 });
+  });
+
   test("the handoff URL's member checksum is never returned to a caller", async () => {
     const chain = new Chain();
     const { readers } = await connect(chain);
@@ -322,6 +335,34 @@ describe("the pixel buffer", () => {
     const chain = new Chain({ [image("metadata")]: () => Response.json({ ...fixture.imageMetadata(), numberOfFrames: 0 }) });
     const { readers } = await connect(chain);
     await expect(readers.getImagingImagePixels(fixture.STUDY_UID, fixture.SERIES_UID, fixture.SOP_UID)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    // The code alone does not say which check fired: a zeroed expectedBytes would reach the buffer and
+    // be refused by the length comparison under the same code. Refused from the metadata means the
+    // request was never made - and a zero-length body would otherwise have satisfied the arithmetic.
+    expect(chain.paths()).not.toContain(image("pixels"));
+  });
+
+  /**
+   * Measured live 2026-09-23: a viewer F5 session left over from an earlier run makes the SAML leg
+   * answer differently and the token mint come back unsuccessful, so every imaging read after the
+   * first failed TOKEN_UNAVAILABLE. The chain drops those cookies before it starts.
+   */
+  test("a viewer session left in the jar by an earlier run never rides along on the next handoff", async () => {
+    const chain = new Chain();
+    const transport = new MaccabiTransport({ fetch: chain.fetch });
+    transport.importCookies({
+      version: "tough-cookie@6.0.2", storeType: "MemoryCookieStore", rejectPublicSuffixes: true,
+      cookies: [{
+        key: "MEDDREAMSESSID", value: "stale-viewer-session", domain: "meddreamy.maccabi4u.co.il",
+        path: "/", secure: true, httpOnly: true, hostOnly: true,
+        creation: "2026-09-23T00:00:00.000Z", lastAccessed: "2026-09-23T00:00:00.000Z",
+      }],
+    });
+    transport.markAuthenticated();
+    const readers = await MaccabiReaders.create(transport);
+    await readers.getImagingStudy(fixture.STUDY_UID);
+    const viewerCalls = chain.seen.filter(entry => entry.href.startsWith(VIEWER_ORIGIN));
+    expect(viewerCalls.length).toBeGreaterThan(0);
+    for (const call of viewerCalls) expect(call.headers.get("cookie") ?? "").not.toContain("stale-viewer-session");
   });
 });
 

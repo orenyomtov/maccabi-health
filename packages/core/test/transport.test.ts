@@ -133,6 +133,38 @@ describe("redirects the caller asked to handle itself", () => {
     const transport = new MaccabiTransport({ fetch: async () => new Response(null, { status: 302, headers: { location: "http://" } }) });
     await expect(transport.request(PORTAL_ORIGIN + "/sonline/synthetic/read", { redirect: "manual" })).rejects.toMatchObject({ code: "INVALID_URL" });
   });
+
+  /** A walker with no bound is the actual risk here, so the bound is pinned to its exact hop count. */
+  test("an endless redirect chain stops at nine requests rather than walking for ever", async () => {
+    let calls = 0;
+    const transport = new MaccabiTransport({ fetch: async () => {
+      calls++;
+      return new Response(null, { status: 302, headers: { location: `/sonline/synthetic/hop-${calls}` } });
+    } });
+    await expect(transport.request(PORTAL_ORIGIN + "/sonline/synthetic/read")).rejects.toMatchObject({ code: "TOO_MANY_REDIRECTS" });
+    expect(calls).toBe(9);
+  });
+});
+
+describe("credentials embedded in a URL", () => {
+  /**
+   * `new URL("https://a:b@online.maccabi4u.co.il/x").origin` is the allowed portal origin, so the
+   * allowlist alone lets userinfo through and `url.href` then carries it onto the wire. Checked both
+   * where a caller supplies it and where an upstream redirect does.
+   */
+  test("userinfo on an otherwise allowed origin is refused and never reaches fetch", async () => {
+    const seen: string[] = [];
+    const transport = new MaccabiTransport({ fetch: async input => {
+      seen.push(String(input));
+      return new Response(null, { status: 302, headers: { location: "https://synthetic-user:synthetic-secret@online.maccabi4u.co.il/sonline/next" } });
+    } });
+    await expect(transport.request("https://synthetic-user:synthetic-secret@online.maccabi4u.co.il/sonline/read"))
+      .rejects.toMatchObject({ code: "UNSUPPORTED_ORIGIN" });
+    expect(seen).toEqual([]);
+    await expect(transport.request(PORTAL_ORIGIN + "/sonline/read")).rejects.toMatchObject({ code: "UNSUPPORTED_ORIGIN" });
+    expect(seen).toEqual([PORTAL_ORIGIN + "/sonline/read"]);
+    expect(seen.join(" ")).not.toContain("synthetic-secret");
+  });
 });
 
 describe("which hop counts as an authenticated portal request", () => {
@@ -261,4 +293,36 @@ describe("the transport enforces the deadline it advertises", () => {
       .rejects.toMatchObject({ code: "REQUEST_ABORTED" });
     expect(calls).toBe(1); // The abort is observed around the call, not by declining to make it.
   });
+});
+
+describe("no failure path abandons a response body", () => {
+  // Node's fetch keeps the socket assigned to an unconsumed body, so a throw that walks past one
+  // pins a connection in the pool until the process exits. Measured before this was fixed: forty
+  // failing requestJson calls against a local peer left forty live TCP connections and reused none
+  // of them, and two hundred of them saturated the default 128-connection pool for good. The CLI
+  // exits after one command, but the MCP server is long-lived and a portal outage produces exactly
+  // these paths, so every one of them has to release the body it is throwing away.
+  const cases: [string, ResponseInit, (transport: MaccabiTransport) => Promise<unknown>, boolean][] = [
+    ["a non-ok JSON read", { status: 500, headers: { "content-type": "application/json" } }, transport => transport.requestJson(PORTAL_ORIGIN + "/sonline/x"), false],
+    ["a JSON read answered with HTML", { status: 200, headers: { "content-type": "text/html" } }, transport => transport.requestJson(PORTAL_ORIGIN + "/sonline/x"), false],
+    ["the 401/403 gate on an authenticated request", { status: 403 }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x"), true],
+    ["an expiry redirect to the login host", { status: 302, headers: { location: LOGIN_ORIGIN + "/my.policy" } }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x"), true],
+    ["a redirect off the allowlist", { status: 302, headers: { location: "https://evil.example/" } }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x"), false],
+    ["a redirect the caller asked to refuse", { status: 302, headers: { location: PORTAL_ORIGIN + "/sonline/y" } }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x", { redirect: "error" }), false],
+    ["an upstream cookie the jar rejects", { status: 200, headers: { "set-cookie": "a=b; Domain=example.org" } }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x"), false],
+    ["a Location header that is not a URL", { status: 302, headers: { location: "http://%" } }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x"), false],
+  ];
+  for (const [name, init, call, authenticated] of cases) {
+    test(`${name} releases its body`, async () => {
+      let cancelled = false;
+      const response = new Response(new ReadableStream<Uint8Array>({
+        start: controller => { controller.enqueue(new TextEncoder().encode("upstream body")); },
+        cancel: () => { cancelled = true; },
+      }), init);
+      const transport = new MaccabiTransport({ fetch: async () => response });
+      if (authenticated) transport.markAuthenticated();
+      await expect(call(transport)).rejects.toBeInstanceOf(Error);
+      expect(cancelled || response.bodyUsed).toBe(true);
+    });
+  }
 });

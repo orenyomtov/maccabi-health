@@ -3,7 +3,9 @@ import { afterEach, describe, expect, test } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { ISSUES_URL, MaccabiTransport, ReadOperationError, ReauthenticationRequired, UpstreamError, type MaccabiSession } from "@maccabi/core";
 import { createMaccabiMcpServer, serialExecutor, COVERAGE, COVERAGE_URI, type MaccabiMcpOptions, type SessionLease, type ReaderOperations } from "../src/tools";
-import { encodeRef } from "../src/reference";
+import { decodeRef, encodeRef, RefTokenError } from "../src/reference";
+/** The token prefix, spelled out here so a change to it fails this file rather than passing silently. */
+const PREFIX_MARKER = "mref1_";
 import { LoginError, type LoginHandle } from "@maccabi/cli/login";
 import { SessionStoreError } from "@maccabi/cli/store";
 
@@ -69,12 +71,26 @@ describe("official SDK in-memory MCP integration", () => {
   test("a ref that was edited, invented or taken from the wrong tool fails before any session is resolved", async () => {
     const h = await setup();
     for (const token of ["not-a-ref", "mref1_zzzz", encodeRef("visit", { appointment_id: "synthetic" }).slice(0, -4)]) {
-      const response = structured(await h.client.callTool({ name: "maccabi_detail", arguments: { ref: token } }));
+      const result = await h.client.callTool({ name: "maccabi_detail", arguments: { ref: token } });
+      // Unconditionally: a token that is accepted returns a read rather than an error, and a guarded
+      // assertion would pass silently on exactly the regression this test exists to catch.
+      expect(result.isError).toBe(true);
+      const response = structured(result);
       if (response?.error) {
         expect(response.error.code).toBe("INVALID_REFERENCE");
         expect(response.error.next[0].tool).toBe("maccabi_capabilities");
       }
     }
+    // The decoder's own boundaries, below the argument schema that rejects most of the above first.
+    // The prefix is what closes the token namespace: without it any base64url payload is a ref.
+    const forged = "xxxxxx" + Buffer.from(JSON.stringify(["visit", { appointment_id: "forged" }])).toString("base64url");
+    expect(() => decodeRef(forged)).toThrow(RefTokenError);
+    expect(decodeRef(PREFIX_MARKER + forged.slice(6)).payload).toEqual({ appointment_id: "forged" });
+    // A local reference is a full sha256 or it is not this list's reference.
+    for (const reference of ["ab", "a".repeat(63), "a".repeat(65)]) {
+      expect(() => decodeRef(encodeRef("certificate", { reference, from: "2026-01-01", to: "2026-12-31" } as never))).toThrow(RefTokenError);
+    }
+    expect(decodeRef(encodeRef("certificate", { reference: "a".repeat(64), from: "2026-01-01", to: "2026-12-31" })).kind).toBe("certificate");
     // A well-formed ref for a row that carries only a document says so, and names the tool that has it.
     const certificate = structured(await h.client.callTool({ name: "maccabi_detail", arguments: { ref: ref("certificate", { reference: "a".repeat(64), from: "2026-01-01", to: "2026-12-31" }) } }));
     expect(certificate.error.code).toBe("INVALID_SELECTION");

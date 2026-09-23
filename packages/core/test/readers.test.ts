@@ -61,8 +61,16 @@ describe("source-backed owner reads", () => {
     expect(JSON.parse(String(transport.calls[1]?.init?.body))).toEqual({ members: [{ member_id: profile.member_id, member_id_code: "0", member_consent_for_subsidiary_information: 0 }], is_with_ascribed_doctor: true });
   });
   test("rejects cross-owner returned medical records", async () => {
-    const transport = new MockTransport([bootstrap(), { results: [{ member_id: "222222222" }] }]);
-    await expect((await MaccabiReaders.create(transport)).listPrescriptions()).rejects.toBeInstanceOf(ReadOperationError);
+    // Both halves of the check, separately: the same member id under a different member code is a
+    // different person's record, and it is the only half nothing else in the suite exercises.
+    for (const row of [{ member_id: "222222222" }, { member_id: String(profile.member_id), member_id_code: 9 }]) {
+      const transport = new MockTransport([bootstrap(), { results: [row] }]);
+      await expect((await MaccabiReaders.create(transport)).listPrescriptions()).rejects.toMatchObject({ code: "OWNER_MISMATCH", operation: "prescriptions" });
+    }
+    // The owner's own row, under the code the bootstrap returned, still reads.
+    const mine = { doc_id: "fixture-document", drug_name: "תרופה לדוגמה", drug_instructions: "טקסט מקורי", from_date: "original-date-text", to_date: "original-date-text", member_id: String(profile.member_id), member_id_code: 0 };
+    const own = new MockTransport([bootstrap(), { results: [mine] }]);
+    expect((await (await MaccabiReaders.create(own)).listPrescriptions()).data).toEqual([mine]);
   });
   test("ascribed-provider timestamp is passed without timezone interpretation", async () => {
     const transport = new MockTransport([bootstrap(), { first_name: "Example", last_name: "Provider", service_provider_id: "fixture-provider" }]);

@@ -210,6 +210,34 @@ describe("loopback OAuth discovery and the bearer gate", () => {
     expect(response.status).toBe(404);
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
+
+  // A request target starting `//` re-parses as an authority, so `http://127.0.0.1:PORT//%/mcp` — a URL
+  // any web page can hand to fetch or an <img> — used to throw out of the request callback and end the
+  // process. The Origin guard never got to run, because the throw happened before it.
+  test("a request target node accepts but WHATWG URL refuses answers 400 instead of ending the process", async () => {
+    const { handle } = await start();
+    for (const target of ["//%/mcp", "//%2f/x", "//[/x", "//a%00b/x"]) {
+      const response = await fetch(`${handle.url.origin}${target}`);
+      expect(response.status).toBe(400);
+    }
+    // Still serving afterwards.
+    expect((await fetch(new URL("/.well-known/oauth-authorization-server", handle.url))).status).toBe(200);
+  });
+
+  // `new Request` refuses the fetch-spec forbidden methods, and the discovery documents build one.
+  test("a forbidden HTTP method on a discovery path answers 400 instead of ending the process", async () => {
+    const { handle } = await start();
+    const status = await new Promise<number>((resolve, reject) => {
+      const request = httpRequest(new URL("/.well-known/oauth-authorization-server", handle.url), { method: "TRACE" }, response => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode ?? 0));
+      });
+      request.on("error", reject);
+      request.end();
+    });
+    expect(status).toBe(400);
+    expect((await fetch(new URL("/.well-known/oauth-authorization-server", handle.url))).status).toBe(200);
+  });
 });
 
 describe("browser authorization", () => {

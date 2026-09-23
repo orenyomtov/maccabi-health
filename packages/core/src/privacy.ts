@@ -39,6 +39,10 @@ const omittedKeys = new Set([
 export function safeClinical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(safeClinical);
   if (!value || typeof value !== "object") return value;
+  // A PDF or pixel read result is a Uint8Array, and `Object.entries` on one is a per-byte index map:
+  // 2 MiB of document becomes a two-million-key object and a second of CPU. Binary is never a record
+  // of named fields, so there is nothing here for the key filter to do.
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return value;
   const result: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
     if (!omittedKeys.has(key.toLowerCase().replace(/[^a-z0-9]/g, ""))) result[key] = safeClinical(item);

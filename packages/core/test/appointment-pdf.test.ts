@@ -78,3 +78,19 @@ test("new PDF contracts reject malformed source components, redirected selectors
   await expect((await MaccabiReaders.create(t)).getVisitSummaryPdf(visitRow.appointment_id)).rejects.toMatchObject({code:"INVALID_RESPONSE"});
  }
 });
+/**
+ * The declared length is a hint the source may omit or lie about; a chunked response carries no
+ * content-length at all. The byte count of what actually arrived is the only cap that holds, and it
+ * has to be tested with a body that really is a PDF - an oversized buffer of zeroes is refused by the
+ * %PDF- check first, so it says nothing about the cap.
+ */
+test("an oversized document that really is a PDF and declares no length is still refused",async()=>{
+ const oversized=()=>new Response("%PDF-"+"0".repeat(2*1024*1024),{headers:{"content-type":"application/pdf"}});
+ expect(oversized().headers.get("content-length")).toBeNull();
+ const t=new Mock([bootstrap(),{results:[visitRow]},visit(),oversized()]);
+ await expect((await MaccabiReaders.create(t)).getVisitSummaryPdf(visitRow.appointment_id)).rejects.toMatchObject({code:"INVALID_RESPONSE"});
+ // One byte under the cap is the same shape and must still come back, so the cap is what refused it.
+ const inside=new Response("%PDF-"+"0".repeat(2*1024*1024-5),{headers:{"content-type":"application/pdf"}});
+ const ok=new Mock([bootstrap(),{results:[visitRow]},visit(),inside]);
+ expect((await(await MaccabiReaders.create(ok)).getVisitSummaryPdf(visitRow.appointment_id)).data.byteLength).toBe(2*1024*1024);
+});

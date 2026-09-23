@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readResponseBody, PORTAL_ORIGIN, type TransportRequestInit } from "../transport";
+import { discard, readResponseBody, PORTAL_ORIGIN, type TransportRequestInit } from "../transport";
 import { ReauthenticationRequired, ISSUES_URL } from "../errors";
 import { assertLegacyPageOwner, parseLegacyHospitalSettings, parseLegacyRecommendations, parseLegacySelectedSummary, LegacyContentError, type LegacyRecommendations, type LegacySelectedSummary } from "./legacy";
 export type { LegacyRecommendations, LegacySelectedSummary } from "./legacy";
@@ -188,7 +188,7 @@ function assertRecordOwner(row: SourceRecord, owner: OwnerIdentity, operation: s
 const F5_LOGON_PAGE = /\bF5\b|my\.policy|my\.logout\.php3/i;
 async function json(transport: ReadTransport, path: string, operation: string, init?: RequestInit): Promise<unknown> {
   const response = await transport.request(path, init);
-  if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
+  if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
   if (response.headers.get("content-type")?.toLowerCase().includes("html")) {
     const page = await readResponseBody(() => response.text(), new ReadOperationError("INVALID_RESPONSE", operation));
     if (F5_LOGON_PAGE.test(page.slice(0, 8192))) throw new ReauthenticationRequired(response.status);
@@ -202,9 +202,9 @@ async function json(transport: ReadTransport, path: string, operation: string, i
 async function legacyBody(response: Response, operation: string): Promise<string> {
   const contentType = response.headers.get("content-type") ?? "";
   const declarations = [...contentType.matchAll(/;\s*charset\s*=\s*(?:"([^"]+)"|([^;\s]+))/gi)];
-  if (declarations.length > 1) throw new ReadOperationError("INVALID_RESPONSE", operation);
+  if (declarations.length > 1) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
   const charset = (declarations[0]?.[1] ?? declarations[0]?.[2] ?? "utf-8").toLowerCase();
-  if (charset !== "utf-8" && charset !== "windows-1255") throw new ReadOperationError("INVALID_RESPONSE", operation);
+  if (charset !== "utf-8" && charset !== "windows-1255") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
   const bytes = await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation));
   if (bytes.byteLength > 1024 * 1024) throw new ReadOperationError("INVALID_RESPONSE", operation);
   try { return new TextDecoder(charset, { fatal: true }).decode(bytes); }
@@ -301,7 +301,7 @@ export class MaccabiReaders {
   async renewSession(): Promise<ReadResult<{ renewed: true }>> {
     const operation = "session-renewal";
     const response = await this.transport.request(this.path("MainAppAPI", "v1", "alive"));
-    if (response.status !== 200) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
+    if (response.status !== 200) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     const body = await readResponseBody(() => response.text(), new ReadOperationError("INVALID_RESPONSE", operation));
     if (body !== "") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result({ renewed: true }, "MainAppAPI", operation);
@@ -421,18 +421,18 @@ export class MaccabiReaders {
     for (let attempt = 0; attempt < 6; attempt++) {
       const response = await this.transport.request(input);
       const finalUrl = new URL(response.url || input, PORTAL_ORIGIN);
-      if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) throw new ReauthenticationRequired(response.status);
-      if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
-      if (finalUrl.origin !== requested.origin || finalUrl.pathname !== requested.pathname || finalUrl.search !== requested.search) throw new ReadOperationError("INVALID_RESPONSE", operation);
+      if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+      if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
+      if (finalUrl.origin !== requested.origin || finalUrl.pathname !== requested.pathname || finalUrl.search !== requested.search) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
       if (response.status === 200) {
-        if (response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf") throw new ReadOperationError("INVALID_RESPONSE", operation);
+        if (response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
         const length = response.headers.get("content-length");
-        if (length !== null && /^\d+$/.test(length) && Number(length) > 2 * 1024 * 1024) throw new ReadOperationError("INVALID_RESPONSE", operation);
+        if (length !== null && /^\d+$/.test(length) && Number(length) > 2 * 1024 * 1024) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
         const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
         if (bytes.byteLength > 2 * 1024 * 1024 || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
         return this.result(bytes, "MainAppAPI", operation);
       }
-      await response.body?.cancel();
+      await discard(response);
       if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 5000));
     }
     throw new ReadOperationError("UPSTREAM_RESULT_ERROR", operation);
@@ -451,9 +451,9 @@ export class MaccabiReaders {
       // The captured public script sends this ASP.NET single-quoted envelope. Value is page-bound digits.
       const response = await this.transport.request(path, { method: "POST", apiAuthorization: false, headers: { "content-type": "application/json; charset=utf-8" }, body: `{'value':'${selectedPeriod.value}'}` });
       const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-      if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) throw new ReauthenticationRequired(response.status);
-      if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
-      if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") throw new ReadOperationError("INVALID_RESPONSE", operation);
+      if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+      if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
+      if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
       const raw = await legacyBody(response, operation);
       let decoded: unknown;
       try { decoded = JSON.parse(raw); } catch { throw new ReadOperationError("INVALID_RESPONSE", operation); }
@@ -485,9 +485,9 @@ export class MaccabiReaders {
     const path = "/online/Ajax/DebitsAndCredits/WcDebitsAndCreditsManager.asmx/GetLTCReport";
     const response = await this.transport.request(path, { method: "POST", apiAuthorization: false, headers: { "content-type": "application/json; charset=utf-8" }, body: "" });
     const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) throw new ReauthenticationRequired(response.status);
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
-    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") throw new ReadOperationError("INVALID_RESPONSE", operation);
+    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
+    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     try {
       const envelope = object(JSON.parse(await legacyBody(response, operation)), operation);
       if (Object.keys(envelope).length !== 1 || typeof envelope.d !== "string") throw new ReadOperationError("INVALID_RESPONSE", operation);
@@ -515,9 +515,9 @@ export class MaccabiReaders {
     const path = "/online/Ajax/DebitsAndCredits/WcDebitsAndCreditsManager.asmx/GetDocFromArchive";
     const response = await this.transport.request(path, { method: "POST", apiAuthorization: false, headers: { "content-type": "application/json; charset=utf-8" }, body: `{'token':'${document.token}', 'reportType':'${document.reportType}'}` });
     const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) throw new ReauthenticationRequired(response.status);
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
-    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") throw new ReadOperationError("INVALID_RESPONSE", operation);
+    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
+    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     let decoded: unknown;
     try { decoded = JSON.parse(await legacyBody(response, operation)); } catch (error) { if (error instanceof SyntaxError) throw new ReadOperationError("INVALID_RESPONSE", operation); throw error; }
     const envelope = object(decoded, operation);
@@ -541,9 +541,9 @@ export class MaccabiReaders {
     const path = "/online/webapi/PersonalRemindersESB/GetReminders/";
     const response = await this.transport.request(path, { apiAuthorization: false });
     const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) throw new ReauthenticationRequired(response.status);
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
-    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") throw new ReadOperationError("INVALID_RESPONSE", operation);
+    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
+    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     let value: unknown;
     try { value = JSON.parse(await legacyBody(response, operation)); }
     catch (error) { if (error instanceof SyntaxError) throw new ReadOperationError("INVALID_RESPONSE", operation); throw error; }
@@ -588,10 +588,10 @@ export class MaccabiReaders {
       selection = { isDateSelected: true, fromDate: sourceDate(range.from), toDate: sourceDate(range.to) };
     }
     const response = await this.transport.request("/online/webapi/MailingsFromHospitals/GetMailingsFromHospitals/", { ...this.post(selection), apiAuthorization: false });
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     const finalUrl = new URL(response.url || "/online/webapi/MailingsFromHospitals/GetMailingsFromHospitals/", PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) throw new ReauthenticationRequired(response.status);
-    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname.toLowerCase() !== "/online/webapi/mailingsfromhospitals/getmailingsfromhospitals/" || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) throw new ReadOperationError("INVALID_RESPONSE", operation);
+    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname.toLowerCase() !== "/online/webapi/mailingsfromhospitals/getmailingsfromhospitals/" || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const data = object(await readResponseBody(() => response.json(), new ReadOperationError("INVALID_RESPONSE", operation)), operation);
     const message = object(data.ResultMessage, operation);
     if (typeof message.Code !== "number") throw new ReadOperationError("INVALID_RESPONSE", operation);
@@ -641,9 +641,9 @@ export class MaccabiReaders {
     const query = new URLSearchParams({ relative: "-1", sr_id: session });
     const response = await this.transport.request(`${path}?${query}`, { apiAuthorization: false });
     const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) throw new ReauthenticationRequired(response.status);
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
-    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname.toLowerCase() !== path.toLowerCase() || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "text/html") throw new ReadOperationError("INVALID_RESPONSE", operation);
+    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
+    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname.toLowerCase() !== path.toLowerCase() || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "text/html") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const html = await legacyBody(response, operation);
     // The exact login HTML bootstrap assignment is also used by the source-backed login parser.
     if (/(?:window\.)?originJWT\s*=\s*["'][A-Za-z0-9_.-]+["']/.test(html)) throw new ReauthenticationRequired(response.status);
@@ -811,7 +811,7 @@ export class MaccabiReaders {
     const metadata = object(await json(this.transport, this.path("DirectorshipAPI", "v1", "timestampAndHash"), operation), operation);
     const query = new URLSearchParams({ timestamp: string(metadata.timestamp, operation), hash: decodeSourceQueryComponent(metadata.hash, operation) });
     const response = await this.transport.request(`${this.path("DirectorshipAPI", "v1", "report/english/")}?${query}`, { apiAuthorization: false });
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
     if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, "DirectorshipAPI", operation);
@@ -1320,9 +1320,9 @@ export class MaccabiReaders {
     const operation = "appointment-source";
     // Exact public static asset observed in S4 record426. No source is evaluated or executed.
     const response = await this.transport.request("/sonline/appointmentOrder/static/js/async/467.5c814e7c.js", { apiAuthorization: false });
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-    if (contentType !== "application/javascript" && contentType !== "text/javascript") throw new ReadOperationError("UNSUPPORTED_FLOW", operation);
+    if (contentType !== "application/javascript" && contentType !== "text/javascript") { await discard(response); throw new ReadOperationError("UNSUPPORTED_FLOW", operation); }
     const source = await readResponseBody(() => response.text(), new ReadOperationError("INVALID_RESPONSE", operation));
     if (source.length > 8_000_000 || !source.includes("/odoro/session") || !source.includes("/odoro/dialog")) throw new ReadOperationError("UNSUPPORTED_FLOW", operation);
     const matches = [...source.matchAll(/\b[A-Za-z_$][\w$]*="\/sonline\/AppointmentOrderAPI\/webapi\/mac\/",[A-Za-z_$][\w$]*="([a-f0-9]{32})"/g)];
@@ -1450,11 +1450,11 @@ export class MaccabiReaders {
     const requested = new URL(input, PORTAL_ORIGIN);
     const response = await this.transport.request(input, { apiAuthorization: false });
     const finalUrl = new URL(response.url || input, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) throw new ReauthenticationRequired(response.status);
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
-    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== requested.pathname || finalUrl.search !== requested.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf") throw new ReadOperationError("INVALID_RESPONSE", operation);
+    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
+    if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== requested.pathname || finalUrl.search !== requested.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const declaredLength = response.headers.get("content-length");
-    if (maxBytes !== undefined && declaredLength !== null && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) throw new ReadOperationError("INVALID_RESPONSE", operation);
+    if (maxBytes !== undefined && declaredLength !== null && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
     if ((maxBytes !== undefined && bytes.byteLength > maxBytes) || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, service, operation);
@@ -1466,7 +1466,7 @@ export class MaccabiReaders {
     catch { throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const query = new URLSearchParams({ path, timestamp: string(record.timestamp, operation), hash });
     const response = await this.transport.request(`${this.path("MedicalFileAPI", "v1", "pdf")}?${query}`, { apiAuthorization: false });
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
     if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, "MedicalFileAPI", operation);
@@ -1518,7 +1518,7 @@ export class MaccabiReaders {
     const gender = this.profile.sex === "נ" ? "2" : "1";
     const query = new URLSearchParams({ memberidcode: this.owner.memberIdCode, memberid: String(this.owner.memberId), data: string(record.doc_id, operation), t: string(record.time_stamp, operation), hash: decodeSourceQueryComponent(record.hash, operation), loggedInUserGender: gender, currentUsergender: gender, memberIdForHeader: String(this.owner.memberId), memberIdCodeForHeader: this.owner.memberIdCode });
     const response = await this.transport.request(`/sonline/TestResultsAPI/webapi/mac/pdf/openfile?${query}`, { apiAuthorization: false });
-    if (!response.ok) throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status);
+    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
     if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, "TestResultsAPI", operation);

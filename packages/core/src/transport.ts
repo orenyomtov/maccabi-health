@@ -65,6 +65,16 @@ export function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> 
   });
 }
 
+/**
+ * Release a response nobody is going to read. Node's fetch keeps the socket assigned to an
+ * unconsumed body, so a throw that walks past one pins a connection in the pool for the rest of the
+ * process - which matters most in the long-lived MCP server, where a run of failing reads is exactly
+ * the shape that saturates it. An already-consumed or errored body is not a failure to report.
+ */
+export async function discard(response: Response): Promise<void> {
+  try { await response.body?.cancel(); } catch { /* nothing left to release */ }
+}
+
 /** Keep aborted native fetch body reads distinct from malformed upstream content. */
 export async function readResponseBody<T>(consume: () => Promise<T>, failure: Error): Promise<T> {
   try { return await consume(); }
@@ -220,16 +230,19 @@ export class MaccabiTransport {
           await this.#jar.setCookie(cookie, url.href);
         }
       } catch {
+        await discard(response);
         throw new UpstreamError("INVALID_UPSTREAM_COOKIE");
       }
       // Measured on live traffic: F5 enforces expiry with a 302 to /my.policy and never a bare 401 or
       // 403, while this jar's Imperva cookies make a 403 here most likely a bot-mitigation challenge.
       // Failing the one request without touching the jar keeps a still-live session usable; a session
       // that really is dead still dies on the redirect check below.
-      if (protectedRequest && [401, 403].includes(response.status)) throw new UpstreamError("HTTP_ERROR", response.status);
+      if (protectedRequest && [401, 403].includes(response.status)) { await discard(response); throw new UpstreamError("HTTP_ERROR", response.status); }
       const location = response.headers.get("location");
       if (!redirectStatuses.has(response.status) || !location) return response;
-      const next = this.#parsedUrl(location, url);
+      let next: URL;
+      try { next = this.#parsedUrl(location, url); }
+      catch (error) { await discard(response); throw error; }
       // One destination, opted into per request by the one caller that asked for the handoff. An
       // expired session answers that same request with /my.policy instead, which is not this path,
       // so everything the expiry rule caught before it is still caught.
@@ -238,14 +251,16 @@ export class MaccabiTransport {
       // above has already stored that fresh anonymous one, so clearing the jar here is what stops
       // every later request from looping back into /my.policy with nothing naming the cause.
       if (protectedRequest && !handoff && (next.origin === LOGIN_ORIGIN || next.pathname === "/my.policy")) {
+        await discard(response);
         await this.clearSession();
         throw new ReauthenticationRequired(response.status);
       }
       // A manual-redirect caller follows the hop itself, so the response is handed back before the
       // allowlist gets a say; the allowlist only governs destinations this transport requests itself.
       if (init.redirect === "manual") return response;
-      this.#assertAllowedOrigin(next);
-      if (init.redirect === "error") throw new UpstreamError("UNEXPECTED_REDIRECT", response.status);
+      try { this.#assertAllowedOrigin(next); }
+      catch (error) { await discard(response); throw error; }
+      if (init.redirect === "error") { await discard(response); throw new UpstreamError("UNEXPECTED_REDIRECT", response.status); }
       if (next.origin !== url.origin) {
         headers.delete("authorization");
         headers.delete("origin");
@@ -257,7 +272,7 @@ export class MaccabiTransport {
         headers.delete("content-type");
         headers.delete("content-length");
       }
-      await response.body?.cancel();
+      await discard(response);
       url = next;
     }
     throw new UpstreamError("TOO_MANY_REDIRECTS");
@@ -265,8 +280,8 @@ export class MaccabiTransport {
 
   async requestJson<T = unknown>(input: string | URL, init: TransportRequestInit = {}): Promise<T> {
     const response = await this.request(input, init);
-    if (!response.ok) throw new UpstreamError("HTTP_ERROR", response.status);
-    if (!response.headers.get("content-type")?.toLowerCase().includes("json")) throw new UpstreamError("EXPECTED_JSON", response.status);
+    if (!response.ok) { await discard(response); throw new UpstreamError("HTTP_ERROR", response.status); }
+    if (!response.headers.get("content-type")?.toLowerCase().includes("json")) { await discard(response); throw new UpstreamError("EXPECTED_JSON", response.status); }
     return readResponseBody(() => response.json() as Promise<T>, new UpstreamError("INVALID_JSON", response.status));
   }
 

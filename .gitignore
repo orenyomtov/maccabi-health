@@ -29,6 +29,10 @@ health-exports/
 medical-exports/
 exports/
 
+# Local release artifacts and registry config
+*.tgz
+.npmrc
+
 # Logs and local tooling
 *.log
 .DS_Store
