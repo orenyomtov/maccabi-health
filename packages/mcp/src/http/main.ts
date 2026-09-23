@@ -118,14 +118,18 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
     if (!validateHost(request, response)) return;
     if (!live) { response.writeHead(503, { "cache-control": "no-store" }); response.end(); return; }
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? LOCAL_HTTP_HOST}`);
+    if (!validateOrigin(request, response)) return;
+    // The two OAuth discovery documents are public, but they are not anonymous: they name this
+    // server, so a page that can read one learns its visitor is a Maccabi member. They used to sit
+    // ahead of this guard for a browser-based MCP client, which was a carve-out that bought nothing -
+    // no other route on this server carries CORS, so no such client could finish the flow anyway.
+    // The guard passes a request with no Origin header at all, which is curl and every native MCP
+    // client; what it now refuses is a fetch from some other website the member happened to visit.
     if (url.pathname.startsWith(WELL_KNOWN_PREFIX)) {
-      // Answered ahead of the Origin guard on purpose: a browser-based MCP client has to read these
-      // two public documents cross-origin before it holds anything it could authenticate with.
       const probe = new Request(new URL(url.pathname, live.origin), { method: request.method ?? "GET" });
       const document = oauthMetadataResponse(probe, live.metadata);
       if (document) { writeWebResponse(response, document); return; }
     }
-    if (!validateOrigin(request, response)) return;
     if (router(request, response, url)) return;
     if (url.pathname !== LOCAL_HTTP_PATH) {
       response.writeHead(404, { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" });

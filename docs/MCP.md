@@ -100,7 +100,7 @@ There is currently no flag to register a subset. If a client of yours needs one,
 
 ## Results and limits
 
-Tools advertising `offset`/`limit` default to 20 records and accept at most 50, sliced from a newly fetched response. This does not fetch further upstream pages. JSON is capped at 128 KiB; original PDFs at 2 MiB. Some core PDF methods also cap documents at 2 MiB. Document tools embed the bytes directly; their document URI is not a persistent download link. Oversized results fail explicitly.
+Tools advertising `offset`/`limit` default to 20 records and accept at most 50, sliced from a newly fetched response. This does not fetch further upstream pages. JSON is capped at 128 KiB; original PDFs at 2 MiB. Core PDF methods cap documents at 2 MiB too, refusing the body mid-stream rather than after buffering it. Document tools embed the bytes directly; their document URI is not a persistent download link. Oversized results fail explicitly.
 
 Exhaust `page.nextOffset` where present, preserve dates, values, units and reference ranges, and report available coverage without claiming complete history. Embedded PDF bytes need a PDF-capable client; this server does not extract text or run OCR. Download success alone does not establish that an agent read the document.
 

@@ -9,7 +9,7 @@ Read your own records from Maccabi Healthcare Services, the Israeli health fund,
 
 ## Install
 
-Needs [Node.js 22.19 or later](https://nodejs.org/en/download).
+Needs [Node.js 22 or later](https://nodejs.org/en/download).
 
 ```sh
 npm install -g maccabi-health

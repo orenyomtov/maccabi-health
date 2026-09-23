@@ -12,7 +12,7 @@
  * captured session of one single-frame ultrasound study, so the arithmetic is written to be general
  * and to fail loudly rather than to assume that study's numbers.
  */
-import { IMAGING_HANDOFF_PATH, LOGIN_ORIGIN, PORTAL_ORIGIN, VIEWER_ORIGIN, discard, readResponseBody, type TransportRequestInit } from "../transport";
+import { IMAGING_HANDOFF_PATH, LOGIN_ORIGIN, PORTAL_ORIGIN, VIEWER_ORIGIN, discard, readCappedBody, type TransportRequestInit } from "../transport";
 
 export interface ViewerTransport {
   request(input: string | URL, init?: TransportRequestInit): Promise<Response>;
@@ -172,8 +172,7 @@ async function redirectTarget(response: Response, base: URL | string, origin: st
 async function html(transport: ViewerTransport, url: URL, init: TransportRequestInit): Promise<string> {
   const response = await transport.request(url, init);
   if (!response.ok) { await discard(response); throw new ImagingViewerError("UPSTREAM_HTTP", response.status); }
-  const bytes = await readResponseBody(() => response.arrayBuffer(), new ImagingViewerError("INVALID_RESPONSE", response.status));
-  if (bytes.byteLength > HTML_LIMIT) throw new ImagingViewerError("INVALID_RESPONSE", response.status);
+  const bytes = await readCappedBody(response, HTML_LIMIT, new ImagingViewerError("INVALID_RESPONSE", response.status));
   try { return new TextDecoder("utf-8", { fatal: false }).decode(bytes); }
   catch { throw new ImagingViewerError("INVALID_RESPONSE", response.status); }
 }
@@ -181,8 +180,7 @@ async function viewerJson(transport: ViewerTransport, url: URL, init: TransportR
   const response = await transport.request(url, init);
   if (!response.ok) { await discard(response); throw new ImagingViewerError("UPSTREAM_HTTP", response.status); }
   if (!response.headers.get("content-type")?.toLowerCase().includes("json")) { await discard(response); throw new ImagingViewerError("INVALID_RESPONSE", response.status); }
-  const bytes = await readResponseBody(() => response.arrayBuffer(), new ImagingViewerError("INVALID_RESPONSE", response.status));
-  if (bytes.byteLength > JSON_LIMIT) throw new ImagingViewerError("INVALID_RESPONSE", response.status);
+  const bytes = await readCappedBody(response, JSON_LIMIT, new ImagingViewerError("INVALID_RESPONSE", response.status));
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
   catch { throw new ImagingViewerError("INVALID_RESPONSE", response.status); }
 }
@@ -332,7 +330,7 @@ export async function readImagePixels(transport: ViewerTransport, session: Imagi
   const response = await transport.request(imagePath(session, seriesInstanceUID, sopInstanceUID, "pixels"), { apiAuthorization: false, headers: headers(session) });
   if (!response.ok) { await discard(response); throw new ImagingViewerError("UPSTREAM_HTTP", response.status); }
   if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/octet-stream") { await discard(response); throw new ImagingViewerError("INVALID_RESPONSE", response.status); }
-  const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ImagingViewerError("INVALID_RESPONSE", response.status)));
+  const bytes = await readCappedBody(response, PIXEL_BUFFER_LIMIT, new ImagingViewerError("INVALID_RESPONSE", response.status));
   if (bytes.byteLength !== geometry.expectedBytes) throw new ImagingViewerError("INVALID_RESPONSE", response.status);
   return { ...geometry, pixels: bytes };
 }
@@ -343,8 +341,8 @@ export async function readImageThumbnail(transport: ViewerTransport, session: Im
   if (!response.ok) { await discard(response); throw new ImagingViewerError("UPSTREAM_HTTP", response.status); }
   // The captured response declared `image/jpeg;charset=UTF-8`; the charset on a JPEG is a server quirk.
   if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "image/jpeg") { await discard(response); throw new ImagingViewerError("INVALID_RESPONSE", response.status); }
-  const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ImagingViewerError("INVALID_RESPONSE", response.status)));
-  if (bytes.byteLength > THUMBNAIL_LIMIT || bytes.byteLength < 4) throw new ImagingViewerError("INVALID_RESPONSE", response.status);
+  const bytes = await readCappedBody(response, THUMBNAIL_LIMIT, new ImagingViewerError("INVALID_RESPONSE", response.status));
+  if (bytes.byteLength < 4) throw new ImagingViewerError("INVALID_RESPONSE", response.status);
   if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) throw new ImagingViewerError("INVALID_RESPONSE", response.status);
   return bytes;
 }

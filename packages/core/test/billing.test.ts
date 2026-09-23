@@ -32,7 +32,10 @@ test("quarterly billing period is selected only from fresh options and owner mis
   const transport=new Mock([bootstrap(),legacyResponse(page(),"text/html"),legacyResponse(JSON.stringify({d:fragment()}),"application/json")]);
   expect((await (await MaccabiReaders.create(transport)).listQuarterlyBillingReports("0")).data.selectedPeriod.value).toBe("0");
   expect(transport.calls[2]!.init?.body).toBe("{'value':'0'}");
-  for (const [html,period,code] of [[page(),"2024","UNSUPPORTED_FLOW"],[page(undefined,222222222),undefined,"OWNER_MISMATCH"]] as const){
+  // A marker naming a different member is ownership; a page whose marker cannot be found or parsed at
+  // all is a page this client does not understand, and none of the legacy reads takes a reference the
+  // OWNER_MISMATCH guidance could tell the caller to refresh.
+  for (const [html,period,code] of [[page(),"2024","UNSUPPORTED_FLOW"],[page(undefined,222222222),undefined,"OWNER_MISMATCH"],[page().replace(/header/g,"section"),undefined,"INVALID_RESPONSE"],[page(undefined,"12a" as unknown as number),undefined,"INVALID_RESPONSE"]] as const){
     const t=new Mock([bootstrap(),legacyResponse(html,"text/html")]);
     await expect((await MaccabiReaders.create(t)).listQuarterlyBillingReports(period)).rejects.toMatchObject({code});
     expect(t.calls).toHaveLength(2);

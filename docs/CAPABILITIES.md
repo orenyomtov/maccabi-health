@@ -113,7 +113,7 @@ Both MCP transports resolve the credential lazily, on the first account tool cal
 
 `renew-session` / `maccabi_renew_session` send one ordinary renewal request. CLI `keep-alive` repeats only for an explicit finite duration. Neither guarantees continued authentication or resets a browser idle timer. Keep-alive's effect, measured live on 2026-09-23, is the difference between the two server clocks: it holds off the idle timeout, and it cannot move the 3600-second absolute cap that starts at login. Expect to log in again every hour regardless. Session maintenance is not prescription renewal. Forced reauthentication needs a fresh login: interactive, or the `--id`/`--code` flags and their tool equivalents.
 
-CLI PDFs are new files, mode 0600, no overwrite. Some core PDF methods also cap documents at 2 MiB, so the CLI does not bypass all document bounds. MCP JSON is capped at 128 KiB and original PDFs at 2 MiB. Only commands and tools that advertise local `--limit` / `--offset` (CLI, max 1000) or list paging (MCP, default 20, max 50) accept them. They slice a newly fetched response and do not load further upstream pages. Clinical history, retention, and upstream pagination are incomplete.
+CLI PDFs are new files, mode 0600, no overwrite. Core PDF methods cap documents at 2 MiB, so the CLI does not bypass the document bound. MCP JSON is capped at 128 KiB and original PDFs at 2 MiB. Only commands and tools that advertise local `--limit` / `--offset` (CLI, max 1000) or list paging (MCP, default 20, max 50) accept them. They slice a newly fetched response and do not load further upstream pages. Clinical history, retention, and upstream pagination are incomplete.
 
 ## Unsupported
 

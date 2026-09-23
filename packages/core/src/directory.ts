@@ -1,7 +1,7 @@
 import { load } from "cheerio/slim";
 import { createHash, randomUUID } from "node:crypto";
 import { MaccabiError, UpstreamError } from "./errors";
-import { readResponseBody, USER_AGENT, type FetchFunction } from "./transport";
+import { readCappedBody, USER_AGENT, type FetchFunction } from "./transport";
 import type { ReadResult } from "./readers";
 import { projectDirectoryDetails, type DirectoryProviderDetails } from "./directory-detail";
 export type { DirectoryProviderDetails } from "./directory-detail";
@@ -231,20 +231,8 @@ export class MaccabiDirectory {
     }
     if (response.status !== 200) throw new UpstreamError("DIRECTORY_HTTP_ERROR", response.status);
     if ((response.url && response.url !== url) || response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== mime || !response.body) throw invalid();
-    const bodyStream = response.body.getReader();
-    const chunks: Uint8Array[] = []; let size = 0;
-    return readResponseBody(async () => {
-      try {
-        for (;;) {
-          const part = await bodyStream.read(); if (part.done) break;
-          size += part.value.byteLength;
-          if (size > MAX_BODY) { await bodyStream.cancel(); throw invalid(); }
-          chunks.push(part.value);
-        }
-        const bytes = new Uint8Array(size); let offset = 0;
-        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-      } finally { bodyStream.releaseLock(); }
-    }, invalid());
+    const bytes = await readCappedBody(response, MAX_BODY, invalid());
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    catch { throw invalid(); }
   }
 }

@@ -330,7 +330,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
           const guidance = lease?.reauthentication ?? options.reauthentication ?? { instruction: "Run the local Maccabi CLI login, then retry. maccabi_login_start and maccabi_login_verify can sign in from here instead, at the cost of putting the ID number and the SMS code into this conversation." };
           return errorResult("REAUTHENTICATION_REQUIRED", guidance.instruction, guidance.url, signInSteps);
         }
-        if (error instanceof OutputLimit) return errorResult("RESULT_TOO_LARGE", "Request fewer list records, or use the local CLI for a large structured result. Some core PDF readers also enforce the document limit. No result was silently shortened.");
+        if (error instanceof OutputLimit) return errorResult("RESULT_TOO_LARGE", "Request fewer list records, or use the local CLI for a large structured result. Core PDF readers enforce the same document limit. No result was silently shortened.");
         if (error instanceof ReadOperationError) return errorResult(error.code, READ_ERROR_GUIDANCE[error.code](error.operation));
         // Local storage failed, not Maccabi: say so, so a broken config directory is not mistaken for upstream flakiness. Its message can name a path, so it stays out of the result.
         if (error instanceof SessionStoreError) return errorResult(error.code, "Protected session storage could not be read or written. Check the permissions of the maccabi config directory, then retry. No credentials or file path are included in this error.");

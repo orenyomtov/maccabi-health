@@ -406,9 +406,14 @@ describe("purchased medication report and financial metadata", () => {
     }
   });
   test("reader body timeouts preserve transport classification rather than malformed-record errors", async () => {
-    for (const kind of ["json", "arrayBuffer"] as const) {
-      const response = kind === "json" ? Response.json({}) : new Response("", { headers: { "content-type": "application/pdf" } });
-      Object.defineProperty(response, kind, { value: async () => { throw new DOMException("synthetic timeout", "TimeoutError"); } });
+    // A PDF read is a chunked, capped stream rather than one arrayBuffer() call, so the timeout it has
+    // to classify surfaces from the body stream instead of from a whole-body promise.
+    const timeout = (): DOMException => new DOMException("synthetic timeout", "TimeoutError");
+    for (const kind of ["json", "stream"] as const) {
+      const response = kind === "json"
+        ? Response.json({})
+        : new Response(new ReadableStream<Uint8Array>({ start: controller => { controller.error(timeout()); } }), { headers: { "content-type": "application/pdf" } });
+      if (kind === "json") Object.defineProperty(response, "json", { value: async () => { throw timeout(); } });
       const transport = new MockTransport(kind === "json" ? [bootstrap(), response] : [bootstrap(), { timestamp: "synthetic", hash: "synthetic" }, response]);
       const readers = await MaccabiReaders.create(transport);
       await expect(kind === "json" ? readers.listInquiries() : readers.getEnglishMedicalSummaryPdf()).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" });
@@ -662,6 +667,13 @@ describe("owner contact profile and notification list", () => {
       const readers = await MaccabiReaders.create(new MockTransport([bootstrap(), { letters: [{ ...row, ...changed }] }]));
       await expect(readers.listNotifications({ from: "2025-01-01", to: "2026-01-01" })).rejects.toMatchObject({ code: "letter_type" in changed ? "UNSUPPORTED_FLOW" : "OWNER_MISMATCH" });
     }
+    // A type-1 mailing that simply omits child_info has not been shown to belong to anyone else. The
+    // field this reader needs is missing, which is a response shape we do not parse - and since
+    // `notifications` takes no reference, OWNER_MISMATCH would name an action the caller cannot take.
+    const withoutChildInfo: Record<string, unknown> = { ...row };
+    delete withoutChildInfo.child_info;
+    const incomplete = await MaccabiReaders.create(new MockTransport([bootstrap(), { letters: [withoutChildInfo] }]));
+    await expect(incomplete.listNotifications({ from: "2025-01-01", to: "2026-01-01" })).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   });
 });
 

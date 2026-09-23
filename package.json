@@ -27,7 +27,7 @@
     "url": "git+https://github.com/orenyomtov/maccabi-health.git"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.0.0"
   },
   "type": "module",
   "workspaces": [

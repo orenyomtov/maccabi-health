@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { LOGIN_ORIGIN, MaccabiTransport, PORTAL_ORIGIN, VIEWER_ORIGIN, readResponseBody } from "../src/transport";
+import { LOGIN_ORIGIN, MaccabiTransport, PORTAL_ORIGIN, VIEWER_ORIGIN, readCappedBody, readResponseBody } from "../src/transport";
 import { ReauthenticationRequired, UpstreamError } from "../src/errors";
 
 /** A local synthetic HTTP peer, reached only through the injected fetch adapter. */
@@ -325,4 +325,49 @@ describe("no failure path abandons a response body", () => {
       expect(cancelled || response.bodyUsed).toBe(true);
     });
   }
+});
+
+/**
+ * Every size limit in this client used to be written after `arrayBuffer()` or `text()` had already
+ * finished, which measures a body that is wholly in memory rather than stopping one from getting
+ * there. A 400 MiB response against an 8 MiB limit took RSS from 108 MB to 523 MB and still reported
+ * the right error, which is exactly the shape of a bound that is not a bound.
+ */
+describe("bounded body reads", () => {
+  /** 64 KiB, enough that a handful of chunks is unambiguous and a runaway read is obvious. */
+  const CHUNK = 64 * 1024;
+  const CAP = 256 * 1024;
+
+  /** An endless body: whatever reads it has to decide to stop, because the peer never will. */
+  function endless(): { response: Response; produced: () => number; cancelled: () => boolean } {
+    let produced = 0, cancelled = false;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      pull: controller => { produced += CHUNK; controller.enqueue(new Uint8Array(CHUNK)); },
+      cancel: () => { cancelled = true; },
+    }));
+    return { response, produced: () => produced, cancelled: () => cancelled };
+  }
+
+  test("a body past the cap is refused mid-stream, not after it has been buffered", async () => {
+    const body = endless();
+    const failure = new UpstreamError("INVALID_JSON");
+    await expect(readCappedBody(body.response, CAP, failure)).rejects.toBe(failure);
+    // The producer was told to stop, so the socket is released rather than left draining.
+    expect(body.cancelled()).toBe(true);
+    // Draining this body would never terminate. Stopping within a couple of chunks of the cap is the
+    // whole claim: peak memory is the cap, not whatever the upstream decided to send.
+    expect(body.produced()).toBeLessThanOrEqual(CAP + 2 * CHUNK);
+  });
+
+  test("a body at the cap is still read, and its bytes arrive intact", async () => {
+    const payload = new Uint8Array(CAP).fill(7);
+    const bytes = await readCappedBody(new Response(payload), CAP, new UpstreamError("INVALID_JSON"));
+    expect(bytes.byteLength).toBe(CAP);
+    expect(bytes.every(byte => byte === 7)).toBe(true);
+  });
+
+  test("one byte over the cap is refused with the caller's own error", async () => {
+    const failure = new UpstreamError("INVALID_JSON");
+    await expect(readCappedBody(new Response(new Uint8Array(CAP + 1)), CAP, failure)).rejects.toBe(failure);
+  });
 });

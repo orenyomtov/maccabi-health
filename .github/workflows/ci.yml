@@ -24,3 +24,39 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+
+  # The declared engines floor, tested rather than asserted. `npm run check` cannot run here: tsdown
+  # needs Node 22.18 for the type stripping it loads tsdown.config.ts with, and vitest declares
+  # ^22.12.0, so the dev toolchain has a higher floor than the package. What has to work on the floor
+  # is the published artifact, so this builds and packs on a Node that can, then installs the tarball
+  # the way a consumer would and exercises the bin and an MCP tools/list handshake on 22.0.0.
+  floor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Pack the tarball
+        run: |
+          npm run build
+          mkdir -p "$RUNNER_TEMP/floor"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/floor"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.0.0
+          package-manager-cache: false
+      - name: Install the tarball and smoke-test it on the floor
+        env:
+          MACCABI_CONFIG_DIR: ${{ runner.temp }}/floor-config
+        run: |
+          mkdir -p "$RUNNER_TEMP/floor-install"
+          cd "$RUNNER_TEMP/floor-install"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$RUNNER_TEMP"/floor/maccabi-health-*.tgz
+          node "$GITHUB_WORKSPACE/scripts/smoke.mjs" "$PWD/node_modules/.bin/maccabi"

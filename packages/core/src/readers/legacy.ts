@@ -5,6 +5,15 @@ import { decodeHTML } from "entities";
 export class LegacyContentError extends Error {
   constructor() { super("Maccabi legacy content does not match the observed page structure"); this.name = "LegacyContentError"; }
 }
+/**
+ * The page's current-patient marker was found, parsed, and names someone other than the owner. Kept
+ * apart from LegacyContentError, which means the marker was absent or unreadable: one is a page that
+ * belongs to a different member, the other is a page this parser does not understand, and the caller
+ * is told to do different things about them.
+ */
+export class LegacyOwnerMismatchError extends Error {
+  constructor() { super("Maccabi legacy page identifies a different member"); this.name = "LegacyOwnerMismatchError"; }
+}
 export interface LegacyTable { columns: string[]; rows: string[][] }
 export interface LegacyRecommendations { introduction: string; sections: { title: string; table: LegacyTable }[]; closingNote: string }
 export interface LegacySelectedSummary {
@@ -73,6 +82,11 @@ export function parseLegacySelectedSummary(input: string): LegacySelectedSummary
 
 /** Exact server-rendered current-patient header marker, matched to modern bootstrap in S13.
  * Never return its value. Matching HTML elsewhere (scripts/forms/attributes) is not owner proof.
+ *
+ * Two outcomes, deliberately distinct. A marker that is missing, duplicated or not 1-9 digits is a
+ * LegacyContentError: this parser could not establish whose page it is, which is a gap in this client.
+ * A marker that reads cleanly and names a different member is a LegacyOwnerMismatchError, which is
+ * the only one of the three that is actually about ownership.
  */
 export function assertLegacyPageOwner(input: string, expectedMemberId: number): void {
   if (!Number.isSafeInteger(expectedMemberId) || expectedMemberId < 0) fail();
@@ -82,7 +96,8 @@ export function assertLegacyPageOwner(input: string, expectedMemberId: number): 
   const selector = "span#ctl00_ctl00_wcSiteHeaderLobby1_wcSiteHeaderCurrentPatient_wcSiteHeaderChildrenList_lblCustomerIDNumber";
   if (count(input, selector) !== 1) fail();
   const marker = one(input, `header ${selector}`);
-  if (!/^\d{1,9}$/.test(marker) || Number(marker) !== expectedMemberId) fail();
+  if (!/^\d{1,9}$/.test(marker)) fail();
+  if (Number(marker) !== expectedMemberId) throw new LegacyOwnerMismatchError();
 }
 
 /** Source-backed hospital page configuration only; no evaluation or dynamic URL return. */

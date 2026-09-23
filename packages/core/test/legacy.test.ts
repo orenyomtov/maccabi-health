@@ -42,14 +42,21 @@ describe("observed legacy projections", () => {
 });
 
 test("legacy owner proof requires the unique server-rendered current-patient header marker", async () => {
-  const { assertLegacyPageOwner } = await import("../src/readers/legacy");
+  const { assertLegacyPageOwner, LegacyOwnerMismatchError } = await import("../src/readers/legacy");
   const id = "ctl00_ctl00_wcSiteHeaderLobby1_wcSiteHeaderCurrentPatient_wcSiteHeaderChildrenList_lblCustomerIDNumber";
   const page = `<header><div style="display:none"><span id="${id}">000000123</span></div></header>`;
   expect(() => assertLegacyPageOwner(page, 123)).not.toThrow();
-  expect(() => assertLegacyPageOwner(page, 124)).toThrow(LegacyContentError);
+  // A marker that reads cleanly and names someone else is the only ownership failure of the three.
+  expect(() => assertLegacyPageOwner(page, 124)).toThrow(LegacyOwnerMismatchError);
+  // Absent, duplicated, outside the header, or not 1-9 digits: the marker could not be established
+  // at all, which says nothing about who the page belongs to.
   expect(() => assertLegacyPageOwner(page + page, 123)).toThrow(LegacyContentError);
   expect(() => assertLegacyPageOwner(`<script>123</script><input value="123">`, 123)).toThrow(LegacyContentError);
   expect(() => assertLegacyPageOwner(page.replace(/header/g, "section"), 123)).toThrow(LegacyContentError);
+  expect(() => assertLegacyPageOwner(page.replace("000000123", "12a"), 123)).toThrow(LegacyContentError);
+  for (const unreadable of [page + page, page.replace(/header/g, "section"), page.replace("000000123", "12a")]) {
+    expect(() => assertLegacyPageOwner(unreadable, 123)).not.toThrow(LegacyOwnerMismatchError);
+  }
 });
 
 test("hospital settings use fixed JSON and application root without evaluating code", async () => {

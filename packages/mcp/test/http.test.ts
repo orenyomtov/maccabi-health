@@ -81,6 +81,18 @@ function rawStatus(url: URL, headers: Record<string, string>): Promise<number> {
   });
 }
 
+/** A GET with exactly the headers given, so "no Origin header at all" can be stated rather than assumed. */
+function rawGet(url: URL, headers: Record<string, string>): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(url, { method: "GET", headers }, response => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode ?? 0));
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 function pkce() {
   const verifier = randomBytes(32).toString("base64url");
   return { verifier, challenge: createHash("sha256").update(verifier).digest("base64url") };
@@ -201,6 +213,24 @@ describe("loopback OAuth discovery and the bearer gate", () => {
     const rejected: Record<string, string>[] = [{ host: "attacker.example" }, { origin: "https://attacker.example" }];
     for (const headers of rejected) {
       expect(await rawStatus(handle.url, headers)).toBe(403);
+    }
+  });
+
+  /**
+   * The discovery documents are public, but they are not anonymous: they name this server, so any
+   * page the member visits could fetch one and learn that its visitor is a Maccabi member. They used
+   * to answer ahead of the Origin guard for the sake of a browser-based MCP client, and no other
+   * route here carries CORS, so no such client could have completed the flow regardless.
+   */
+  test("the discovery documents sit behind the Origin guard and stay reachable without one", async () => {
+    const { handle } = await start();
+    for (const path of ["/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-authorization-server"]) {
+      const url = new URL(path, handle.url);
+      expect(await rawGet(url, { origin: "https://attacker.example" })).toBe(403);
+      // curl, and every native MCP client, sends no Origin at all. That has to keep working.
+      expect(await rawGet(url, {})).toBe(200);
+      // A genuinely local caller is still allowed to name itself.
+      expect(await rawGet(url, { origin: handle.url.origin })).toBe(200);
     }
   });
 

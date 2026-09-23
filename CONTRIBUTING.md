@@ -1,6 +1,6 @@
 # Contributing
 
-Use [Node.js 22.19 or later](https://nodejs.org/en/download). Source is TypeScript under `packages/`; the published package contains built JavaScript and declarations.
+The published package runs on [Node.js 22 or later](https://nodejs.org/en/download), but the build toolchain does not: tsdown loads `tsdown.config.ts` through Node's own type stripping, which is only unflagged from 22.18.0, and vitest wants 22.12.0. Develop on 22.19 or later, or on 24. Source is TypeScript under `packages/`; the published package contains built JavaScript and declarations.
 
 ```sh
 git clone https://github.com/orenyomtov/maccabi-health.git

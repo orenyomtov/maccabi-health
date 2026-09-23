@@ -75,6 +75,40 @@ export async function discard(response: Response): Promise<void> {
   try { await response.body?.cancel(); } catch { /* nothing left to release */ }
 }
 
+/**
+ * Read a body with a ceiling that is actually a ceiling. `arrayBuffer()` and `text()` buffer the
+ * whole response before anyone can look at its length, so a size check written after one of those
+ * is an integrity check on bytes already resident - an upstream that ignores its own content-length
+ * can still push a process into swap. This reads chunk by chunk and cancels the stream at the first
+ * one that crosses `maxBytes`, so the peak is the cap plus one chunk rather than whatever was sent.
+ *
+ * `failure` is thrown for an oversized body, so a caller that used to check the length afterwards
+ * raises exactly what it raised before. A null body reads as empty, which is what `arrayBuffer()`
+ * gives for one.
+ */
+export async function readCappedBody(response: Response, maxBytes: number, failure: Error): Promise<Uint8Array> {
+  const body = response.body;
+  if (!body) return new Uint8Array(0);
+  const reader = body.getReader();
+  return readResponseBody(async () => {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const part = await reader.read();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > maxBytes) { await reader.cancel(); throw failure; }
+        chunks.push(part.value);
+      }
+    } finally { reader.releaseLock(); }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return bytes;
+  }, failure);
+}
+
 /** Keep aborted native fetch body reads distinct from malformed upstream content. */
 export async function readResponseBody<T>(consume: () => Promise<T>, failure: Error): Promise<T> {
   try { return await consume(); }

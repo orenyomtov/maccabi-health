@@ -26,7 +26,7 @@ Account methods live in [the shared readers](https://github.com/orenyomtov/macca
 
 Account requests use the owner from the verified login bootstrap. Dependent selection and caller-supplied account switching are excluded.
 
-Document downloads resolve fresh owner-list or detail references. Private routing values and signatures stay internal. Fixed destination, query, MIME, and PDF-byte checks protect that boundary. Some core PDF methods cap documents at 2 MiB.
+Document downloads resolve fresh owner-list or detail references. Private routing values and signatures stay internal. Fixed destination, query, MIME, and PDF-byte checks protect that boundary. Core PDF methods cap documents at 2 MiB, enforced while the body is read rather than after it.
 
 Legacy HTML accepts only the supported encodings and page structures. Hidden controls and account banners are excluded from returned content.
 

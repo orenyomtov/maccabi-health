@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { discard, readResponseBody, PORTAL_ORIGIN, type TransportRequestInit } from "../transport";
+import { discard, readCappedBody, readResponseBody, PORTAL_ORIGIN, type TransportRequestInit } from "../transport";
 import { ReauthenticationRequired, ISSUES_URL } from "../errors";
-import { assertLegacyPageOwner, parseLegacyHospitalSettings, parseLegacyRecommendations, parseLegacySelectedSummary, LegacyContentError, type LegacyRecommendations, type LegacySelectedSummary } from "./legacy";
+import { assertLegacyPageOwner, parseLegacyHospitalSettings, parseLegacyRecommendations, parseLegacySelectedSummary, LegacyContentError, LegacyOwnerMismatchError, type LegacyRecommendations, type LegacySelectedSummary } from "./legacy";
 export type { LegacyRecommendations, LegacySelectedSummary } from "./legacy";
 import { parseBillingPeriods, parseQuarterlyBillingRows, parseQuarterlyBillingDocuments, type QuarterlyBillingCatalog } from "./billing";
 export type { QuarterlyBillingCatalog, BillingPeriod } from "./billing";
@@ -186,6 +186,12 @@ function assertRecordOwner(row: SourceRecord, owner: OwnerIdentity, operation: s
  * any other HTML is still a parsing gap, which is a different answer for the caller.
  */
 const F5_LOGON_PAGE = /\bF5\b|my\.policy|my\.logout\.php3/i;
+/**
+ * The ceiling on every original PDF this client will read, and the size at which the read is aborted
+ * mid-stream rather than measured after the fact. It matches the MCP layer's own PDF_LIMIT, so a
+ * document this refuses could not have been returned to a model anyway.
+ */
+const PDF_BYTE_LIMIT = 2 * 1024 * 1024;
 async function json(transport: ReadTransport, path: string, operation: string, init?: RequestInit): Promise<unknown> {
   const response = await transport.request(path, init);
   if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
@@ -205,8 +211,7 @@ async function legacyBody(response: Response, operation: string): Promise<string
   if (declarations.length > 1) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
   const charset = (declarations[0]?.[1] ?? declarations[0]?.[2] ?? "utf-8").toLowerCase();
   if (charset !== "utf-8" && charset !== "windows-1255") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
-  const bytes = await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation));
-  if (bytes.byteLength > 1024 * 1024) throw new ReadOperationError("INVALID_RESPONSE", operation);
+  const bytes = await readCappedBody(response, 1024 * 1024, new ReadOperationError("INVALID_RESPONSE", operation));
   try { return new TextDecoder(charset, { fatal: true }).decode(bytes); }
   catch { throw new ReadOperationError("INVALID_RESPONSE", operation); }
 }
@@ -335,7 +340,12 @@ export class MaccabiReaders {
       if (String(row.member_id) !== String(this.owner.memberId) || String(row.member_id_code) !== this.owner.memberIdCode) throw new ReadOperationError("OWNER_MISMATCH", operation);
       const recipientPresent = row.recipient_id !== undefined || row.recipient_id_code !== undefined;
       if ((row.letter_type === 1 || recipientPresent) && (String(row.recipient_id) !== String(this.owner.memberId) || String(row.recipient_id_code) !== this.owner.memberIdCode)) throw new ReadOperationError("OWNER_MISMATCH", operation);
-      if (row.child_info === true || (row.letter_type === 1 && row.child_info !== false)) throw new ReadOperationError("OWNER_MISMATCH", operation);
+      if (row.child_info === true) throw new ReadOperationError("OWNER_MISMATCH", operation);
+      // A type-1 mailing that never says whose it is has not been shown to belong to someone else -
+      // the field this reader needs simply is not there. `notifications` takes no reference, so the
+      // OWNER_MISMATCH guidance would tell the caller to re-run a list with a fresh reference it has
+      // no way to supply; the honest answer is that this response shape is not one we parse.
+      if (row.letter_type === 1 && row.child_info !== false) throw new ReadOperationError("INVALID_RESPONSE", operation);
       if (row.letter_type === 2 || row.letter_type === 3) {
         try {
           const projected = projectGeneralMailings([row])[0]!;
@@ -428,8 +438,8 @@ export class MaccabiReaders {
         if (response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
         const length = response.headers.get("content-length");
         if (length !== null && /^\d+$/.test(length) && Number(length) > 2 * 1024 * 1024) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
-        const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
-        if (bytes.byteLength > 2 * 1024 * 1024 || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
+        const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
+        if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
         return this.result(bytes, "MainAppAPI", operation);
       }
       await discard(response);
@@ -648,7 +658,14 @@ export class MaccabiReaders {
     // The exact login HTML bootstrap assignment is also used by the source-backed login parser.
     if (/(?:window\.)?originJWT\s*=\s*["'][A-Za-z0-9_.-]+["']/.test(html)) throw new ReauthenticationRequired(response.status);
     try { assertLegacyPageOwner(html, this.owner.memberId); }
-    catch (error) { if (error instanceof LegacyContentError) throw new ReadOperationError("OWNER_MISMATCH", operation); throw error; }
+    catch (error) {
+      if (error instanceof LegacyOwnerMismatchError) throw new ReadOperationError("OWNER_MISMATCH", operation);
+      // A marker this parser could not find or read is a gap in this client, not a stale reference.
+      // None of the five reads that land here takes a reference or an id, so the OWNER_MISMATCH
+      // guidance - re-run the originating list, use a fresh reference - names nothing the caller has.
+      if (error instanceof LegacyContentError) throw new ReadOperationError("INVALID_RESPONSE", operation);
+      throw error;
+    }
     return html;
   }
 
@@ -812,7 +829,7 @@ export class MaccabiReaders {
     const query = new URLSearchParams({ timestamp: string(metadata.timestamp, operation), hash: decodeSourceQueryComponent(metadata.hash, operation) });
     const response = await this.transport.request(`${this.path("DirectorshipAPI", "v1", "report/english/")}?${query}`, { apiAuthorization: false });
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
-    const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
+    const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
     if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, "DirectorshipAPI", operation);
   }
@@ -1446,7 +1463,7 @@ export class MaccabiReaders {
     return this.downloadMedicalFilePdf(referral, operation);
   }
 
-  private async downloadSourcePdf(input: string, service: string, operation: string, maxBytes?: number): Promise<ReadResult<Uint8Array>> {
+  private async downloadSourcePdf(input: string, service: string, operation: string, maxBytes: number = PDF_BYTE_LIMIT): Promise<ReadResult<Uint8Array>> {
     const requested = new URL(input, PORTAL_ORIGIN);
     const response = await this.transport.request(input, { apiAuthorization: false });
     const finalUrl = new URL(response.url || input, PORTAL_ORIGIN);
@@ -1454,9 +1471,9 @@ export class MaccabiReaders {
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== requested.pathname || finalUrl.search !== requested.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const declaredLength = response.headers.get("content-length");
-    if (maxBytes !== undefined && declaredLength !== null && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
-    const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
-    if ((maxBytes !== undefined && bytes.byteLength > maxBytes) || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
+    if (declaredLength !== null && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
+    const bytes = await readCappedBody(response, maxBytes, new ReadOperationError("INVALID_RESPONSE", operation));
+    if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, service, operation);
   }
 
@@ -1467,7 +1484,7 @@ export class MaccabiReaders {
     const query = new URLSearchParams({ path, timestamp: string(record.timestamp, operation), hash });
     const response = await this.transport.request(`${this.path("MedicalFileAPI", "v1", "pdf")}?${query}`, { apiAuthorization: false });
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
-    const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
+    const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
     if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, "MedicalFileAPI", operation);
   }
@@ -1519,7 +1536,7 @@ export class MaccabiReaders {
     const query = new URLSearchParams({ memberidcode: this.owner.memberIdCode, memberid: String(this.owner.memberId), data: string(record.doc_id, operation), t: string(record.time_stamp, operation), hash: decodeSourceQueryComponent(record.hash, operation), loggedInUserGender: gender, currentUsergender: gender, memberIdForHeader: String(this.owner.memberId), memberIdCodeForHeader: this.owner.memberIdCode });
     const response = await this.transport.request(`/sonline/TestResultsAPI/webapi/mac/pdf/openfile?${query}`, { apiAuthorization: false });
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
-    const bytes = new Uint8Array(await readResponseBody(() => response.arrayBuffer(), new ReadOperationError("INVALID_RESPONSE", operation)));
+    const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
     if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, "TestResultsAPI", operation);
   }

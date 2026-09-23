@@ -7,7 +7,7 @@ import { describe, expect, test, vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { ReauthenticationRequired, type MaccabiSession } from "@maccabi/core";
-import { CLI_REAUTHENTICATION_INSTRUCTION, localSessionResolver, RENEWAL_INTERVAL_MS, startLocalMcp, startSessionRenewal } from "../src/stdio";
+import { CLI_REAUTHENTICATION_INSTRUCTION, localSessionResolver, RENEWAL_FAILURE_LIMIT, RENEWAL_INTERVAL_MS, startLocalMcp, startSessionRenewal } from "../src/stdio";
 import { COVERAGE_URI, createMaccabiMcpServer, serialExecutor, type ConnectedReaders, type ReaderOperations, type SessionLease } from "../src/tools";
 
 const repo = new URL("../../../", import.meta.url).pathname;
@@ -128,8 +128,14 @@ describe("stdio background session renewal", () => {
     expect(connects).toBe(0);
   });
 
-  test("a failed renewal stops the timer, reports once and never deletes the stored session", async () => {
-    for (const failure of [new ReauthenticationRequired(401), new Error("network down")]) {
+  /**
+   * The two failures are not the same event. Maccabi rejecting the session is final: the transport
+   * raises it only on the one observed expiry shape, and a retry cannot undo it. A network failure is
+   * usually a blip, and ending renewal for the rest of the process over one of those is what leaves
+   * the session to die quietly and costs the member an SMS later.
+   */
+  test("a rejected session stops renewal at once, a transient failure is absorbed to a bounded limit, and neither deletes the stored session", async () => {
+    for (const [failure, ticksBeforeStop] of [[new ReauthenticationRequired(401), 1], [new Error("network down"), RENEWAL_FAILURE_LIMIT]] as const) {
       let attempts = 0, saves = 0, invalidates = 0;
       const reports: string[] = [];
       const clear = vi.spyOn(globalThis, "clearInterval");
@@ -140,9 +146,14 @@ describe("stdio background session renewal", () => {
         stderr: text => { reports.push(text); },
       });
       try {
+        for (let tick = 1; tick < ticksBeforeStop; tick++) {
+          await renewal.tick();
+          expect(clear).not.toHaveBeenCalled(); // Still armed: a blip does not end renewal.
+          expect(reports).toEqual([]); // And it does not narrate every retry to stderr either.
+        }
         await renewal.tick();
-        expect(attempts).toBe(1);
-        expect(clear).toHaveBeenCalled(); // The timer is torn down inside the failing tick, not left to retry.
+        expect(attempts).toBe(ticksBeforeStop);
+        expect(clear).toHaveBeenCalled(); // The timer is torn down inside the tick that gives up.
         expect(saves).toBe(0);
         // The member can only replace this credential with a fresh SMS, so the timer must never remove it.
         expect(invalidates).toBe(0);
@@ -151,6 +162,34 @@ describe("stdio background session renewal", () => {
         expect(reports[0]!.endsWith("\n")).toBe(true);
       } finally { renewal.stop(); clear.mockRestore(); }
     }
+  });
+
+  test("a renewal that succeeds clears the failures behind it", async () => {
+    let fail = true, attempts = 0;
+    const reports: string[] = [];
+    const clear = vi.spyOn(globalThis, "clearInterval");
+    const renewal = startSessionRenewal({
+      intervalMs: 3_600_000, exclusive: serialExecutor(),
+      resolveSession: async (): Promise<SessionLease> => ({ session: synthetic("kept"), owner: renewalOwner, save: async () => {}, invalidate: async () => {} }),
+      connect: async (): Promise<ConnectedReaders> => {
+        attempts++;
+        if (fail) throw new Error("network down");
+        return { readers: renewingReaders(async () => ({ data: { renewed: true } })), exportSession: async () => synthetic("fresh") };
+      },
+      stderr: text => { reports.push(text); },
+    });
+    try {
+      // One short of giving up, then a success, then the same run again: the count starts over, so an
+      // intermittent connection never accumulates its way to a permanent stop.
+      for (let tick = 0; tick < RENEWAL_FAILURE_LIMIT - 1; tick++) await renewal.tick();
+      fail = false;
+      await renewal.tick();
+      fail = true;
+      for (let tick = 0; tick < RENEWAL_FAILURE_LIMIT - 1; tick++) await renewal.tick();
+      expect(attempts).toBe(2 * RENEWAL_FAILURE_LIMIT - 1);
+      expect(clear).not.toHaveBeenCalled();
+      expect(reports).toEqual([]);
+    } finally { renewal.stop(); clear.mockRestore(); }
   });
 
   test("the renewal timer never holds the process open and is cleared on stop", async () => {
@@ -225,7 +264,10 @@ describe("stdio background session renewal", () => {
       expect((answer as any).structuredContent.data.f_name_hebrew).toBe("דוגמה");
     } finally { await client.close(); await server.close(); renewal.stop(); }
     await ticked;
-    // The stalled tick is dropped from the queue and reported exactly as a failed renewal is.
+    // The stalled tick is dropped from the queue and counted exactly as a failed renewal is: absorbed
+    // on its own, and still carried toward the bounded limit that eventually ends renewal.
+    expect(reports).toEqual([]);
+    for (let tick = 1; tick < RENEWAL_FAILURE_LIMIT; tick++) await renewal.tick();
     expect(reports).toHaveLength(1);
     expect(reports[0]).toContain("left in place");
   });

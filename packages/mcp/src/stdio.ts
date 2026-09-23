@@ -1,4 +1,5 @@
 import { serveStdio, type StdioServerHandle } from "@modelcontextprotocol/server/stdio";
+import { ReauthenticationRequired } from "@maccabi/core";
 import { FileSessionStore, type CredentialStore } from "@maccabi/cli/store";
 import { connectSession, serialExecutor, createMaccabiMcpServer, type Executor, type MaccabiMcpOptions, type SessionResolver } from "./tools";
 
@@ -39,6 +40,15 @@ export function localSessionResolver(store: CredentialStore = new FileSessionSto
 /** Matches the CLI keep-alive default, and is far under the shortest observed idle death. */
 export const RENEWAL_INTERVAL_MS = 240_000;
 
+/**
+ * Consecutive failed ticks tolerated before renewal gives up for good. At the 240-second interval
+ * that is about twelve minutes of uninterrupted failure - far longer than a dropped wifi connection,
+ * a DNS hiccup or a single Imperva challenge, and long past the point where a fourth identical
+ * attempt would say anything the first three did not. One failure used to be enough to end renewal
+ * for the whole process, so a two-second blip four minutes in cost the member an SMS later.
+ */
+export const RENEWAL_FAILURE_LIMIT = 3;
+
 export interface SessionRenewalOptions {
   resolveSession: SessionResolver;
   /** The same executor the tools use, so a tick never overlaps a tool call on one session. */
@@ -58,6 +68,7 @@ export function startSessionRenewal(options: SessionRenewalOptions): { tick(): P
   const connect = options.connect ?? ((session, owner) => connectSession(session, owner, options.fetch));
   const report = options.stderr ?? (text => { process.stderr.write(text); });
   let timer: ReturnType<typeof setInterval> | undefined;
+  let failures = 0;
   const stop = (): void => { if (timer !== undefined) clearInterval(timer); timer = undefined; };
   const tick = async (): Promise<void> => {
     try {
@@ -69,11 +80,22 @@ export function startSessionRenewal(options: SessionRenewalOptions): { tick(): P
         await connected.readers.renewSession();
         await lease.save(await connected.exportSession());
       });
-    } catch {
+      failures = 0;
+    } catch (error) {
       // Never invalidate from here. A background timer that deletes the stored session would destroy a
       // credential the member can only replace with a fresh SMS, over a failure they never asked for.
+      //
+      // A rejected session is final - the transport raises this only on the one observed expiry shape,
+      // and no amount of retrying brings it back - so that one stops the timer on the spot. Everything
+      // else is very often transient, and the timer absorbs a bounded run of those before giving up.
+      if (!(error instanceof ReauthenticationRequired)) {
+        failures++;
+        if (failures < RENEWAL_FAILURE_LIMIT) return;
+      }
       stop();
-      report("Maccabi MCP background session renewal stopped after a failed renewal. The saved session was left in place; the next tool call reports the real error.\n");
+      report(error instanceof ReauthenticationRequired
+        ? "Maccabi MCP background session renewal stopped: Maccabi rejected the saved session as expired. The saved session was left in place; the next tool call reports the real error.\n"
+        : `Maccabi MCP background session renewal stopped after ${RENEWAL_FAILURE_LIMIT} consecutive failed renewals. The saved session was left in place; the next tool call reports the real error.\n`);
     }
   };
   timer = setInterval(() => { void tick(); }, options.intervalMs ?? RENEWAL_INTERVAL_MS);
