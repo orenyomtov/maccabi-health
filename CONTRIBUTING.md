@@ -1,6 +1,6 @@
 # Contributing
 
-Use [Node.js 22.19 or later](https://nodejs.org/en/download). Source stays TypeScript under `packages/`; the package contains built JavaScript and declarations.
+Use [Node.js 22.19 or later](https://nodejs.org/en/download). Source is TypeScript under `packages/`; the published package contains built JavaScript and declarations.
 
 ```sh
 git clone https://github.com/orenyomtov/maccabi-health.git
@@ -11,7 +11,7 @@ npm run check
 
 `npm run check` typechecks, builds, and runs Vitest. Tests use synthetic data and local services only: no healthcare account, SMS, or real credentials. Live-account work needs deliberate authorization and stays out of the default suite.
 
-Bugs, unsupported flows and feature requests go to the [issue tracker](https://github.com/orenyomtov/maccabi-health/issues); vulnerabilities go privately through [SECURITY.md](SECURITY.md). Open an issue before a large change, so the approach can be settled before the work.
+Bugs, unsupported flows and feature requests go to the [issue tracker](https://github.com/orenyomtov/maccabi-health/issues); vulnerabilities go privately through [SECURITY.md](SECURITY.md). Open an issue before a large change so the approach can be settled first.
 
 ## Architecture
 
@@ -39,15 +39,15 @@ For local verification, `npm pack` builds a tarball without publishing. Install 
 
 `server.json` at the repository root describes this server for the [official MCP registry](https://modelcontextprotocol.io/registry/quickstart). Nothing has been published to it yet; these are the steps, and the order is not optional.
 
-The registry proves npm ownership by fetching the published `package.json` and checking that its `mcpName` equals the `name` in `server.json`. Both currently read `io.github.orenyomtov/maccabi-health`, and the GitHub login in that namespace is what `mcp-publisher login github` grants. So **npm publish has to happen first** — the registry reads the published package, not the repository.
+The registry proves npm ownership by fetching the published `package.json` and checking that its `mcpName` equals the `name` in `server.json`. Both currently read `io.github.orenyomtov/maccabi-health`, and the GitHub login in that namespace is what `mcp-publisher login github` grants. So **npm publish has to happen first**: the registry reads the published package, not the repository.
 
 1. Publish to npm through the release workflow above.
 2. Install the publisher: `brew install mcp-publisher`, or the release tarball from [modelcontextprotocol/registry](https://github.com/modelcontextprotocol/registry).
-3. `mcp-publisher login github` — device-code OAuth, grants the `io.github.orenyomtov/*` namespace.
+3. `mcp-publisher login github`: device-code OAuth, grants the `io.github.orenyomtov/*` namespace.
 4. `mcp-publisher publish` from the repository root.
 
-What `server.json` has to satisfy, all of it enforced: `description` is capped at 100 characters (ours is 87); `version` and `packages[].version` must both equal the npm version, and `latest` is rejected; `packages[].identifier` is the npm package name; `name` must equal `package.json`'s `mcpName` exactly. `packageArguments` carries the `mcp` positional, because this package's bin is a CLI whose MCP server is a subcommand — without it a client would launch the binary and get the help index instead of a server. There are no `license`, `keywords` or `categories` fields. Published versions are immutable, so a mistake costs a version bump.
+What `server.json` has to satisfy, all of it enforced: `description` is capped at 100 characters (ours is 87); `version` and `packages[].version` must both equal the npm version, and `latest` is rejected; `packages[].identifier` is the npm package name; `name` must equal `package.json`'s `mcpName` exactly. `packageArguments` carries the `mcp` positional, because this package's bin is a CLI whose MCP server is a subcommand. Without it a client would launch the binary and get the help index instead of a server. There are no `license`, `keywords` or `categories` fields. Published versions are immutable, so a mistake costs a version bump.
 
-`server.json` is deliberately not in `package.json`'s `files`: the publisher reads it from the working tree, and the npm tarball has no use for it. It is also not version-stamped for you — `scripts/release.mjs` rewrites `package.json` and `package-lock.json` on the runner and nothing else — so bump both version fields in `server.json` in the repository before publishing a listing, or the registry will reject it for not matching the npm version.
+`server.json` is deliberately not in `package.json`'s `files`: the publisher reads it from the working tree, and the npm tarball has no use for it. It is also not version-stamped for you. `scripts/release.mjs` rewrites `package.json` and `package-lock.json` on the runner and nothing else, so bump both version fields in `server.json` in the repository before publishing a listing, or the registry will reject it for not matching the npm version.
 
 The registry is still marked preview, with breaking changes and data resets expected. Listing is worth doing; depending on it is not.

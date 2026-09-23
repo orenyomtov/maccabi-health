@@ -1,6 +1,6 @@
 # Authentication
 
-How signing in works, what leaves your machine, and what is written to disk. Applies to both the CLI and the MCP server — they run the same code (`packages/cli/src/login.ts`), so there is one flow, not two.
+How signing in works, what leaves your machine, and what is written to disk. Applies to both the CLI and the MCP server: they run the same code (`packages/cli/src/login.ts`), so there is one flow, not two.
 
 ## The upstream flow
 
@@ -18,11 +18,11 @@ Step 7 needs the cookie jar built up during steps 1-6. That single fact drives t
 
 ## Why there is a pending-login file
 
-`MaccabiAuth` keeps the challenge — the sender JWT, the validator JWT, and the cookie jar — in memory. That is fine for an interactive login, where one process prompts for the ID, waits, prompts for the code, and finishes. It does not survive `maccabi login --id` exiting and `maccabi login --code` starting as a new process minutes later.
+`MaccabiAuth` keeps the challenge (the sender JWT, the validator JWT, and the cookie jar) in memory. That is fine for an interactive login, where one process prompts for the ID, waits, prompts for the code, and finishes. It does not survive `maccabi login --id` exiting and `maccabi login --code` starting as a new process minutes later.
 
 So a two-step login exports the challenge to `pending-login.json` between the two commands, and restores it before the final SAML POST. The file exists only for the gap between steps 4 and 5.
 
-HTTP mode does not use this file. That process stays up across all three steps, so each in-flight challenge lives in memory, scoped to the one authorization it belongs to, and is dropped when that authorization finishes or its ten minutes run out. It also fixes something a shared file cannot: two members signing in at the same moment would overwrite each other's challenge, and the loser's code would then be rejected — which is exactly what locks a Maccabi account.
+HTTP mode does not use this file. That process stays up across all three steps, so each in-flight challenge lives in memory, scoped to the one authorization it belongs to, and is dropped when that authorization finishes or its ten minutes run out. It also fixes something a shared file cannot: two members signing in at the same moment would overwrite each other's challenge, and the loser's code would then be rejected, which is exactly what locks a Maccabi account.
 
 ## What is stored, where
 
@@ -33,13 +33,13 @@ Every file below lives in the config directory, resolved in this order:
 3. `%APPDATA%\maccabi-mcp` on Windows
 4. `~/.config/maccabi-mcp`
 
-The directory is created mode `0700`. Every file is written mode `0600`, created at that mode rather than chmod'ed afterwards, and swapped in with `rename` — so no truncated or world-readable version is ever observable, even if the process dies mid-write. On load, a file whose mode has any group or other bits set prints a warning to stderr.
+The directory is created mode `0700`. Every file is written mode `0600`, created at that mode rather than chmod'ed afterwards, and swapped in with `rename`, so no truncated or world-readable version is ever observable, even if the process dies mid-write. On load, a file whose mode has any group or other bits set prints a warning to stderr.
 
-The temporary file each write swaps in is named with a fresh UUID, so concurrent writes never share a path. They used to be named after the process ID, which meant two writes in one process collided on the exclusive create and the loser's cleanup deleted the winner's file before it could be renamed — three overlapping writes could leave no session file at all. A failed write now only ever unlinks the temporary file it created itself; it never touches the real file, so a previously saved session survives intact.
+The temporary file each write swaps in is named with a fresh UUID, so concurrent writes never share a path. They used to be named after the process ID, which meant two writes in one process collided on the exclusive create and the loser's cleanup deleted the winner's file before it could be renamed. Three overlapping writes could leave no session file at all. A failed write now only ever unlinks the temporary file it created itself; it never touches the real file, so a previously saved session survives intact.
 
-Storage failures raise `SessionStoreError`, a `MaccabiError` with the code `SESSION_STORE_UNAVAILABLE`. The CLI maps it to exit code 1, and the MCP server returns that code rather than the generic `READ_UNAVAILABLE`, so a broken config directory is never reported as upstream flakiness. The message can name a file path, so only the CLI — running in the member's own terminal — prints it; MCP results carry fixed guidance instead.
+Storage failures raise `SessionStoreError`, a `MaccabiError` with the code `SESSION_STORE_UNAVAILABLE`. The CLI maps it to exit code 1, and the MCP server returns that code rather than the generic `READ_UNAVAILABLE`, so a broken config directory is never reported as upstream flakiness. The message can name a file path, so only the CLI, running in the member's own terminal, prints it; MCP results carry fixed guidance instead.
 
-### `session.json` — the signed-in session
+### `session.json`: the signed-in session
 
 ```
 { session: { version, cookies: SerializedCookieJar, authenticatedAt, apiAuthorization? },
@@ -48,15 +48,15 @@ Storage failures raise `SessionStoreError`, a `MaccabiError` with the code `SESS
 
 Portal cookies and, when present, an API bearer token. Anyone who can read this file can read the member's medical records until Maccabi expires the session. It is rewritten after reads that refresh cookies, so its mtime tracks use.
 
-### `pending-login.json` — the half-finished challenge
+### `pending-login.json`: the half-finished challenge
 
 ```
 { version, id, memberId, senderJwt, validatorJwt?, phones, expiresAt, cookies }
 ```
 
-Live bearer tokens for an in-flight challenge. Ten-minute TTL, enforced when the file is read, not by a timer — an expired file is deleted and reported as if it were absent. Deleted on successful verify, on any failed verify, on `logout`, and on expiry. `validatorJwt` is present only once an SMS has actually been sent, which is how `--status` can distinguish "picked a phone, code sent" from "waiting for a phone choice".
+Live bearer tokens for an in-flight challenge. Ten-minute TTL, enforced when the file is read, not by a timer. An expired file is deleted and reported as if it were absent. Deleted on successful verify, on any failed verify, on `logout`, and on expiry. `validatorJwt` is present only once an SMS has actually been sent, which is how `--status` can distinguish "picked a phone, code sent" from "waiting for a phone choice".
 
-### `oauth.json` — registered clients and live tokens
+### `oauth.json`: registered clients and live tokens
 
 ```
 { version, clients, codes, access, refresh }
@@ -64,13 +64,13 @@ Live bearer tokens for an in-flight challenge. Ten-minute TTL, enforced when the
 
 Written only by `maccabi mcp --http`. Holds the clients registered through `/register` (at most 64, forgotten after 90 days idle), unredeemed authorization codes, and live access and refresh tokens. Every token is stored as its SHA-256 hash, so the file cannot be read back for a usable bearer token. It does carry each token's subject, and the matching `sessions/<subject>.json` beside it is the real secret. Removed by `maccabi logout --all`.
 
-### `sessions/<subject>.json` — one signed-in member, HTTP mode
+### `sessions/<subject>.json`: one signed-in member, HTTP mode
 
 The same shape and the same rules as `session.json`, one file per member who has authorized through the browser. The name is the subject hash described under [MCP](#mcp), not the ID number. Removed when that member's read hits reauthentication, when they call `maccabi_logout`, and by `maccabi logout --all`.
 
 ### What is never stored
 
-The ID number and the SMS code. Neither is written to either file as a credential, neither is logged, and neither appears in any error message or JSON field — error strings are self-authored, never upstream text echoed back. `memberId` in both files is the account identifier returned by Maccabi, used to detect a session belonging to a different member; it is not the login secret.
+The ID number and the SMS code. Neither is written to these files as a credential, neither is logged, and neither appears in any error message or JSON field. Error strings are self-authored, never upstream text echoed back. `memberId` in `session.json`, `pending-login.json`, and `sessions/<subject>.json` is the account identifier returned by Maccabi, used to detect a session belonging to a different member; it is not the login secret.
 
 ## CLI
 
@@ -83,7 +83,7 @@ maccabi logout                          deletes session.json and pending-login.j
 maccabi logout --all                    also deletes oauth.json and every sessions/ file
 ```
 
-`MACCABI_ID` and `MACCABI_OTP` are read only when the matching flag is absent; flags win. Passing `--id` and `--code` together is a usage error — they are two separate commands by design, because the SMS has to arrive in between.
+`MACCABI_ID` and `MACCABI_OTP` are read only when the matching flag is absent; flags win. Passing `--id` and `--code` together is a usage error: they are two separate commands by design, because the SMS has to arrive in between.
 
 When the account has more than one SMS-capable number and `--phone` was not given, `--id` prints the options and exits 3 **without sending anything**. Choosing on the member's behalf would send the code to a phone they may not be holding. This is the only exit-3 path that writes to stdout.
 
@@ -100,7 +100,7 @@ Which sign-in tools exist depends on the transport, because the two transports g
 | `maccabi_login_status` | `{}` | yes | yes |
 | `maccabi_logout` | `{}` | yes | yes |
 
-All are `.strict()`, and all are `readOnlyHint: false` because they mutate local state. They do not go through `withOwner`, the wrapper every read tool uses, because that wrapper requires an existing session — which is exactly what is missing. They do share the same `exclusive()` serializer, so a login cannot interleave with a read.
+All are `.strict()`, and all are `readOnlyHint: false` because they mutate local state. They do not go through `withOwner`, the wrapper every read tool uses, because that wrapper requires an existing session, which is exactly what is missing. They do share the same `exclusive()` serializer, so a login cannot interleave with a read.
 
 Over stdio, `maccabi_login_start` and `maccabi_login_verify` put the ID number and the SMS code into the model's context, and into whatever the client persists or sends upstream. The server's `instructions` string says so, and says to prefer `maccabi login` in the member's own terminal when that is possible. When a read fails with `REAUTHENTICATION_REQUIRED`, the guidance names both options and states that cost.
 
@@ -119,9 +119,9 @@ Over HTTP those two tools are not registered at all. The sign-in happens in the 
 | `/token` | authorization code and refresh token exchange |
 | `/revoke` | RFC 7009 revocation |
 
-An unauthenticated request to `/mcp` answers 401 with a `WWW-Authenticate` header naming the resource metadata, and a client that speaks MCP authorization finds everything else from there. PKCE with `S256` is required; `plain` is refused. The only scope is `maccabi`. Tokens are opaque random strings kept as SHA-256 hashes, and an access token is bound to `http://127.0.0.1:PORT/mcp` as its audience — a token minted for any other resource is refused even if it verifies. Access tokens last an hour; refresh tokens last thirty days and rotate on every use, and replaying a spent one revokes every token that member holds.
+An unauthenticated request to `/mcp` answers 401 with a `WWW-Authenticate` header naming the resource metadata, and a client that speaks MCP authorization finds everything else from there. PKCE with `S256` is required; `plain` is refused. The only scope is `maccabi`. Tokens are opaque random strings kept as SHA-256 hashes, and an access token is bound to `http://127.0.0.1:PORT/mcp` as its audience. A token minted for any other resource is refused even if it verifies. Access tokens last an hour; refresh tokens last thirty days and rotate on every use, and replaying a spent one revokes every token that member holds.
 
-The three form steps ask for the ID number, the phone to text, and the code: the same three things the CLI asks for, in the browser instead of the terminal. Each is a POST to `/authorize` carrying a CSRF token checked against a `SameSite=Lax` cookie scoped to that path. There is also a limit of five SMS per minute across all in-flight sign-ins. That one is not politeness — a local process that could drive the first step in a loop would burn the member's SMS budget straight into an account lockout.
+The three form steps ask for the ID number, the phone to text, and the code: the same three things the CLI asks for, in the browser instead of the terminal. Each is a POST to `/authorize` carrying a CSRF token checked against a `SameSite=Lax` cookie scoped to that path. There is also a limit of five SMS per minute across all in-flight sign-ins. That one is not politeness: a local process that could drive the first step in a loop would burn the member's SMS budget straight into an account lockout.
 
 `redirect_uri` is where an open redirector would live, so it is checked twice, once at registration and again at `/authorize`, and a mismatch renders an error page with no `Location` header at all rather than bouncing the browser anywhere. Loopback URIs may differ in port between registration and use and in nothing else, per RFC 8252 §7.3; `127.0.0.1`, `[::1]` and `localhost` all count as loopback, because real clients use all three. Anything else has to be one of two exact strings, the `vscode.dev` and `insiders.vscode.dev` redirect endpoints.
 
@@ -143,8 +143,8 @@ A wrong code ends the challenge. The pending file is deleted before the error pr
 
 ## Trust boundary
 
-Over stdio there is no auth between a client and the server, and adding a startup token would not create one — anything that can reach the server can already spawn `node dist/cli.js mcp` itself and get the same tools against the same `session.json`. The boundary is the file, and the file is protected by Unix permissions.
+Over stdio there is no auth between a client and the server, and adding a startup token would not create one. Anything that can reach the server can already spawn `node dist/cli.js mcp` itself and get the same tools against the same `session.json`. The boundary is the file, and the file is protected by Unix permissions.
 
-Over HTTP there is auth, and it is worth being exact about what it buys. It separates members, so one member's token cannot read another's records. It keeps the ID number and the SMS code out of the model's context, because the sign-in happens in the browser. And it gives the re-authorization loop something to revoke. It is not a defence against a hostile local process: such a process can register its own client and drive the `/authorize` form itself, and the only thing in its way is that the form needs the ID number and a code from the member's phone. It can also read `sessions/<subject>.json` directly and skip all of it.
+Over HTTP there is auth. It separates members, so one member's token cannot read another's records. It keeps the ID number and the SMS code out of the model's context, because the sign-in happens in the browser. And it gives the re-authorization loop something to revoke. It is not a defense against a hostile local process: such a process can register its own client and drive the `/authorize` form itself, and the only thing in its way is that the form needs the ID number and a code from the member's phone. It can also read `sessions/<subject>.json` directly and skip all of it.
 
-What follows from that: on a machine you do not share, the exposure is any process running as you. On a shared machine, `0600` is what keeps other users out — which is why the load path warns when the mode has drifted. Anyone who can read a credential file has the member's medical records without needing the ID or the phone.
+What follows from that: on a machine you do not share, the exposure is any process running as you. On a shared machine, `0600` is what keeps other users out, which is why the load path warns when the mode has drifted. Anyone who can read a credential file has the member's medical records without needing the ID or the phone.
