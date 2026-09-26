@@ -49,6 +49,3 @@ export function safeClinical(value: unknown): unknown {
   }
   return result;
 }
-
-/** Read-only view of the omitted key set, for tests and for surfaces that want to document it. */
-export const OMITTED_KEYS: ReadonlySet<string> = omittedKeys;

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { OAuthError, OAuthErrorCode } from "@modelcontextprotocol/server";
-import { readProtected, removeProtected, writeProtected } from "@maccabi/cli/store";
+import { readProtected, writeProtected } from "@maccabi/cli/store";
 
 export const ACCESS_TTL_MS = 60 * 60 * 1000;
 export const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -79,7 +79,12 @@ export class OAuthStore {
       refresh: [...this.#refresh.entries()],
     });
     this.#writes = this.#writes.then(() => writeProtected(this.path, snapshot()), () => writeProtected(this.path, snapshot()));
-    return this.#writes;
+    // The maps above are the source of truth, so a failed mirror write must never fail the request
+    // that caused it: rejecting here would burn an authorization code, or lose tokens the client was
+    // never handed, and the member pays for that with a fresh browser sign-in and another SMS.
+    return this.#writes.catch((error: unknown) => {
+      process.stderr.write(`Warning: ${this.path} could not be updated (${error instanceof Error ? error.message : String(error)}); the server keeps working from memory.\n`);
+    });
   }
 
   sweep(): void {
@@ -186,12 +191,6 @@ export class OAuthStore {
     for (const [key, token] of this.#access) if (token.subject === subject) this.#access.delete(key);
     for (const [key, token] of this.#refresh) if (token.subject === subject) this.#refresh.delete(key);
     await this.#persist();
-  }
-
-  async clear(): Promise<void> {
-    this.#clients.clear(); this.#codes.clear(); this.#access.clear(); this.#refresh.clear();
-    await this.#writes.catch(() => {});
-    await removeProtected(this.path);
   }
 
   /** Test and shutdown seam: waits for the write-through mirror to catch up with the in-memory state. */

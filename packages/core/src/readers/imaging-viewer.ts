@@ -6,11 +6,10 @@
  * inputs are present verbatim in the markup, two hops carry the only copy of a value in `Location`,
  * and the last hop rotates the application cookie, which is the actual authentication event. There is
  * no bearer token anywhere and no JavaScript to run; a cookie jar that keeps cookies per host is the
- * entire runtime requirement. `docs/research/imaging-viewer-wire-spec.md` has the measured detail.
+ * entire runtime requirement. The live run is recorded in `docs/research/LIVE-VALIDATION.md`.
  *
- * Nothing here has been executed against the live viewer. Every shape below was taken from one
- * captured session of one single-frame ultrasound study, so the arithmetic is written to be general
- * and to fail loudly rather than to assume that study's numbers.
+ * Pixel arithmetic is written to be general and to fail loudly rather than to assume one study's
+ * numbers. Error status codes are still guesses: the live runs produced no error responses.
  */
 import { IMAGING_HANDOFF_PATH, LOGIN_ORIGIN, PORTAL_ORIGIN, VIEWER_ORIGIN, discard, readCappedBody, type TransportRequestInit } from "../transport";
 

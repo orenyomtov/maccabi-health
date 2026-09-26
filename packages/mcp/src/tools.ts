@@ -7,7 +7,7 @@ import {
 } from "@maccabi/core";
 import { LoginError, login as fileLogin, type LoginHandle } from "@maccabi/cli/login";
 import { SessionStoreError } from "@maccabi/cli/store";
-import { decodeRef, encodeRef, REF_KINDS, REF_TOKEN, RefTokenError, type DecodedRef } from "./reference";
+import { decodeRef, encodeRef, REF_KINDS, REF_TOKEN, RefTokenError, type DecodedRef, type RefKind } from "./reference";
 
 export interface SessionLease {
   session: MaccabiSession;
@@ -183,12 +183,15 @@ export function serialExecutor(timeoutMs: number = OPERATION_TIMEOUT_MS): Execut
     return task;
   };
 }
-const pageShape = { offset: z.number().int().min(0).max(1_000_000).default(0), limit: z.number().int().min(1).max(50).default(20) };
+const PAGE_DEFAULTS = { offset: 0, limit: 20 };
+const pageBound = { offset: z.number().int().min(0).max(1_000_000), limit: z.number().int().min(1).max(50) };
+/** List tools page every response, so both arguments carry the defaults straight into the schema. */
+const pageShape = { offset: pageBound.offset.default(PAGE_DEFAULTS.offset), limit: pageBound.limit.default(PAGE_DEFAULTS.limit) };
 const id = z.string().min(1).max(512);
 const localReference = z.string().regex(/^[a-f0-9]{64}$/, "Use the lowercase 64-character reference shown inside the row this ref came from");
 /** Interpolated into a viewer URL path, so the shape is a schema rule rather than a later check. */
 const dicomUid = z.string().min(1).max(64).regex(/^\d+(?:\.\d+)*$/, "Use a DICOM UID exactly as the imaging study returned it");
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").refine(value => {
+const date = z.string().describe("A calendar date written YYYY-MM-DD, for example 2026-01-31.").regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").refine(value => {
   const timestamp = Date.parse(`${value}T00:00:00Z`);
   return !Number.isNaN(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
 }, "Use a valid calendar date");
@@ -229,7 +232,7 @@ export async function connectSession(session: MaccabiSession, owner: OwnerIdenti
  * The reader here is a model, and a model cannot open an issue. So the ask is not "report this" but
  * "hand the member the link", which is the only form of it that can end in an actual report.
  */
-const DEFECT_GUIDANCE = `Gaps and defects: a tool that fails with INVALID_RESPONSE or UNSUPPORTED_FLOW, or in a way this server does not explain, is a gap in this client rather than a member mistake. The same goes for a read that is missing, incomplete or plainly wrong. You cannot open an issue yourself, so give the member ${ISSUES_URL} together with the tool name and what was asked. Report a security problem privately instead, as SECURITY.md describes, and never quote clinical data into either.`;
+const DEFECT_GUIDANCE = `Gaps and defects: a tool that fails with INVALID_RESPONSE, UNSUPPORTED_FLOW or SOURCE_MOVED, or in a way this server does not explain, is a gap in this client rather than a member mistake. The same goes for a read that is missing, incomplete or plainly wrong. You cannot open an issue yourself, so give the member ${ISSUES_URL} together with the tool name and what was asked. Report a security problem privately instead, as SECURITY.md describes, and never quote clinical data into either.`;
 
 /**
  * The journeys worth knowing before planning a sequence of calls, each as the ordered tool calls
@@ -248,11 +251,10 @@ export const FLOWS = [
     { tool: "maccabi_detail", note: "That `ref` plus `test_id`. Returns current and historical values with graph eligibility." },
     { tool: "maccabi_document", note: "Same pair with variant=comparison_graph or comparison_list for the source's own comparison PDF." },
   ] },
-  { goal: "An imaging study's series, images and pixel data", steps: [
+  { goal: "An imaging study's series, images and per-image DICOM metadata", steps: [
     { tool: "maccabi_imaging_studies", note: "Imaging rows have no attached document; their scans live in the external viewer." },
     { tool: "maccabi_detail", note: "The row's `ref`. Returns study date, modality and the series/instances tree." },
-    { tool: "maccabi_detail", note: "Same `ref` plus a series_instance_uid and sop_instance_uid from that tree, for one image's DICOM metadata." },
-    { tool: "maccabi imaging-thumbnail / maccabi imaging-pixels", note: "Not MCP tools. The preview JPEG and the raw pixel buffer are megabyte-scale binaries, so the CLI writes them to a file in the member's own terminal instead." },
+    { tool: "maccabi_detail", note: "Same `ref` plus a series_instance_uid and sop_instance_uid from that tree, for one image's DICOM metadata. The pixels stop there: the preview JPEG and the raw buffer are megabyte-scale binaries a model cannot use, so `maccabi imaging-thumbnail` and `maccabi imaging-pixels` write them to a file in the member's own terminal instead." },
   ] },
   { goal: "Upcoming appointments, and where to go for one", steps: [
     { tool: "maccabi_upcoming_appointments", note: "Future only. Past visits are maccabi_past_visits." },
@@ -269,7 +271,7 @@ export const FLOWS = [
     { tool: "maccabi_detail", note: "Same `ref`, for the alternatives the source lists. Not a recommendation to change treatment." },
   ] },
   { goal: "Anything filed under a date range: certificates, letters, hospital admissions", steps: [
-    { tool: "maccabi_medical_certificates / maccabi_mailings / maccabi_hospital_visits", note: "Each needs its dates up front. The row's `ref` carries those dates, so the download never has to be given them again." },
+    { tool: "maccabi_medical_certificates", note: "Or maccabi_mailings for letters, status notices and tutorials, or maccabi_hospital_visits for admissions. Each needs its dates up front. The row's `ref` carries those dates, so the download never has to be given them again." },
     { tool: "maccabi_document", note: "The row's `ref`. A type-3 mailing also needs `reference` set to one of its tutorials[].pdf_reference values." },
   ] },
   { goal: "A public provider, with no account at all", steps: [
@@ -330,7 +332,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
           const guidance = lease?.reauthentication ?? options.reauthentication ?? { instruction: "Run the local Maccabi CLI login, then retry. maccabi_login_start and maccabi_login_verify can sign in from here instead, at the cost of putting the ID number and the SMS code into this conversation." };
           return errorResult("REAUTHENTICATION_REQUIRED", guidance.instruction, guidance.url, signInSteps);
         }
-        if (error instanceof OutputLimit) return errorResult("RESULT_TOO_LARGE", "Request fewer list records, or use the local CLI for a large structured result. Core PDF readers enforce the same document limit. No result was silently shortened.");
+        if (error instanceof OutputLimit) return errorResult("RESULT_TOO_LARGE", `This result is over the ${JSON_LIMIT / 1024} KiB cap. Where the tool takes offset and limit, ask for fewer records; a record that is only ever returned whole has no smaller form, so read that one with the local CLI instead. Core PDF readers enforce the same document limit. No result was silently shortened.`);
         if (error instanceof ReadOperationError) return errorResult(error.code, READ_ERROR_GUIDANCE[error.code](error.operation));
         // Local storage failed, not Maccabi: say so, so a broken config directory is not mistaken for upstream flakiness. Its message can name a path, so it stays out of the result.
         if (error instanceof SessionStoreError) return errorResult(error.code, "Protected session storage could not be read or written. Check the permissions of the maccabi config directory, then retry. No credentials or file path are included in this error.");
@@ -353,12 +355,15 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
     try { return output(await action(options.createDirectory?.() ?? new MaccabiDirectory({ fetch: options.fetch }))); }
     catch (error) {
       if (error instanceof OutputLimit) return errorResult("RESULT_TOO_LARGE", "Use the local CLI for this public directory result; no result was silently shortened.");
-      if (error instanceof MaccabiError && error.code === "DIRECTORY_CONFIGURATION_UNAVAILABLE") return errorResult(error.code, "The public directory host served a bot-challenge page instead of the site. This affects all public-directory reads, is scored per request rather than fixed, and is not something this client can reliably get past. Use the official directory in a browser; no search was submitted and no account session was involved.");
-      return errorResult(error instanceof MaccabiError ? error.code : "DIRECTORY_REQUEST_FAILED", "Public directory request failed. The usual cause is the host's bot challenge, which answers programmatic clients with a challenge page and cannot be reliably got past; otherwise use a current field from maccabi_directory_specialties for this category and check connectivity. No account session was used.");
+      // The one message a caller must not be able to read as "no providers matched" is authored once,
+      // in core, where both the doctors path and the JSON paths raise it. Passing it through keeps the
+      // three surfaces from drifting; it is a fixed sentence with nothing upstream in it.
+      if (error instanceof MaccabiError && error.code === "DIRECTORY_BOT_CHALLENGE") return errorResult(error.code, error.message);
+      return errorResult(error instanceof MaccabiError ? error.code : "DIRECTORY_REQUEST_FAILED", "The public directory request failed, and not with the host's bot challenge, which reports itself as DIRECTORY_BOT_CHALLENGE. Use a current field key from maccabi_directory_specialties for this category and check connectivity. No provider list was returned, so this is not an empty result, and no account session was used.");
     }
   }
   /** The one call that replaces reading 38 tool names and guessing how they fit together. */
-  function capabilities(): unknown {
+  function capabilities() {
     return {
       server: { name: "maccabi-health", version, transport: browserLogin ? "http" : "stdio" },
       howItWorks: [
@@ -391,7 +396,9 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
   server.registerTool("maccabi_capabilities", {
     description: "Start here. Describes what this server can read, the worked journeys from an empty conversation to a result, how row references and the `next` list work, and where coverage stops. Needs no account and makes no upstream request. Read it once before planning a sequence of calls; individual tool results then carry their own `next` steps.",
     inputSchema: z.object({}).strict(), annotations: publicTool,
-  }, async () => output(capabilities()));
+    // Not through output(): that runs safeClinical(), which exists for upstream reads and would delete
+    // coverage.session here, because "session" is an omitted key when it names a credential field.
+  }, async () => { const document = capabilities(); return { content: [{ type: "text", text: JSON.stringify(document) }], structuredContent: document }; });
 
   server.registerTool("maccabi_directory_specialties", {
     description: "List the specialties and services the public provider directory can be searched by. Takes a category: `doctors`, or `labs-and-therapists` for labs, institutes and therapists. Returns `field` keys and their Hebrew labels; a search in the same category takes one of those keys. Public catalog: no account, session or cookies.",
@@ -449,12 +456,13 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
   server.registerTool("maccabi_login_status", {
     description: "Report whether a session is saved, a started sign-in is still waiting for its SMS code and how many seconds it has left, or nothing is signed in. Call this first when an account read fails and you are unsure why. Local state only: no upstream request, no SMS, no credentials.",
     inputSchema: z.object({}).strict(),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, () => withLogin(h => h.status()));
   server.registerTool("maccabi_logout", {
     description: "Delete the locally saved session and any sign-in still waiting for its code. Local only; it does not sign the member out of the Maccabi website or revoke anything upstream. Signing back in costs the member another SMS, so do not call it to clear an error.",
     inputSchema: z.object({}).strict(),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    // Destructive: it deletes the one credential the member can only replace by spending another SMS.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   }, () => withLogin(h => h.logout()));
   register("maccabi_renew_session", "Renew the current owner session once and persist the refreshed cookies, to keep a long-lived server from going idle. Not a clinical read: it changes server-side expiry state. It guarantees no extension duration or continued authentication and cannot reset an open browser's idle/logout countdown. Stops on the first error or reauthentication, with no retries, SMS or background timer.", z.object({}).strict(), r => r.renewSession(), false, false);
 
@@ -465,7 +473,8 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
     test_id: id.optional(),
     series_instance_uid: dicomUid.optional(),
     sop_instance_uid: dicomUid.optional(),
-    ...pageShape,
+    offset: pageBound.offset.optional(),
+    limit: pageBound.limit.optional(),
   }).strict();
   const documentSchema = z.object({
     ref: refArgument,
@@ -476,12 +485,29 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
   }).strict();
 
   const LAB_KINDS = new Set(["test", "latest_labs", "followed_labs"]);
+  /** The two ref kinds whose detail is a list of rows. Every other detail is one record, returned whole. */
+  const PAGED_DETAIL_KINDS = new Set(["vaccination_group", "prescription"]);
+  const DOCUMENT_SELECTORS = ["variant", "reference", "irregular_only"] as const;
+  /**
+   * Which of those three selectors each kind of row can actually honour. A selector a reader would
+   * quietly drop is refused instead, because that is the one mistake a caller cannot see: the download
+   * succeeds, the reply carries no complaint, and the bytes are the row's default document rather than
+   * the one that was asked for. maccabi_report refuses the same mistake through a zod refine.
+   */
+  const ACCEPTED_SELECTORS: Record<RefKind, readonly (typeof DOCUMENT_SELECTORS)[number][]> = {
+    test: ["variant", "irregular_only"], latest_labs: ["variant"], followed_labs: ["variant"],
+    visit: ["variant", "reference"], inquiry: ["reference"], administrative_request: ["reference"], mailing: ["reference"],
+    prescription: [], referral: [], certificate: [], additional_information: [],
+    hospital_report: [], billing_report: [], nursing_insurance_report: [],
+    // Rows with no document at all, refused above. Listed so a new ref kind fails the build here.
+    appointment: [], provider: [], vaccination_group: [], directory_provider: [], imaging_study: [],
+  };
   /**
    * Everything about a ref and its selectors that can be decided without asking Maccabi anything.
    * A caller mistake is answered here, before a session is resolved and a transport is built, so it
    * costs no upstream request and cannot be mistaken for the record being unavailable.
    */
-  function preflight(decoded: DecodedRef, tool: "detail" | "document", a: { test_id?: string; reference?: string; series_instance_uid?: string; sop_instance_uid?: string }): string | undefined {
+  function preflight(decoded: DecodedRef, tool: "detail" | "document", a: { test_id?: string; reference?: string; series_instance_uid?: string; sop_instance_uid?: string; variant?: string; irregular_only?: boolean; offset?: number; limit?: number }): string | undefined {
     const kind = decoded.kind;
     if (tool === "detail") {
       if (kind === "referral" || kind === "certificate" || kind === "mailing" || kind === "additional_information" || kind === "hospital_report" || kind === "billing_report" || kind === "nursing_insurance_report") {
@@ -491,10 +517,19 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
       if (kind !== "imaging_study" && (a.series_instance_uid !== undefined || a.sop_instance_uid !== undefined)) return "series_instance_uid and sop_instance_uid select one image inside an imaging study. This ref is not an imaging study.";
       if (kind === "imaging_study" && (a.series_instance_uid === undefined) !== (a.sop_instance_uid === undefined)) return "Selecting one image needs both series_instance_uid and sop_instance_uid, copied from this study's own series/instances tree.";
       if (!LAB_KINDS.has(kind) && a.test_id !== undefined) return "test_id selects one analyte inside a laboratory result or the latest/followed views. This ref is none of those.";
+      if (!PAGED_DETAIL_KINDS.has(kind) && (a.offset !== undefined || a.limit !== undefined)) return "offset and limit page a detail that returns rows, which is a vaccination group's doses or a prescription's alternatives. This ref reads one record, and it is returned whole.";
       return undefined;
     }
     if (kind === "appointment" || kind === "provider" || kind === "vaccination_group" || kind === "directory_provider") return `A ${kind} row has no original document. Use maccabi_detail on this ref instead.`;
     if (kind === "imaging_study") return "An imaging study has no document: its scans live in the external viewer. Use maccabi_detail on this ref for its series and images.";
+    const accepted = ACCEPTED_SELECTORS[kind];
+    const unsupported = DOCUMENT_SELECTORS.filter(name => a[name] !== undefined && !accepted.includes(name));
+    if (unsupported.length > 0) {
+      return `A ${kind} row does not take ${unsupported.join(" or ")}. ${accepted.length === 0 ? "It carries exactly one document, so its ref alone is the whole request." : `It takes ${accepted.join(" and ")}.`}`;
+    }
+    if (a.irregular_only !== undefined && a.variant !== "laboratory_report") return "irregular_only ticks the source's own print checkbox on a whole laboratory report. Add variant=laboratory_report, or use maccabi_report with document=latest_labs for the latest-results report.";
+    if (kind === "visit" && a.variant !== undefined && a.reference !== undefined) return "A visit carries either its summary, chosen with variant=summary, or one attachment, chosen with reference. Pass one of them, not both.";
+    if (kind === "mailing" && a.reference !== undefined && decoded.payload.reference !== undefined) return "This mailing row carries its own document reference, so passing a reference selects nothing here. reference is for a type-3 row, whose documents are its tutorials[].pdf_reference values; to download another row's document, use that row's own ref.";
     if ((kind === "latest_labs" || kind === "followed_labs") && a.test_id === undefined) return `A ${kind} ref selects a whole view. Add test_id - any test_id inside that view - to select one analyte, or use maccabi_report for the whole-view PDF.`;
     if (!LAB_KINDS.has(kind) && a.test_id !== undefined) return "test_id selects one analyte inside a laboratory result or the latest/followed views. This ref is none of those.";
     if (kind === "inquiry" && a.reference === undefined) return "An inquiry's documents are selected by reference: use the list row's pdf_reference for automatic_sick_permit, or a pdf_reference/summary_pdf_reference from maccabi_detail on this same ref.";
@@ -513,6 +548,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
 
   async function detailFor(r: ReaderOperations, decoded: DecodedRef, a: z.output<typeof detailSchema>): Promise<unknown> {
     const p = decoded.payload;
+    const bounds = { offset: a.offset ?? PAGE_DEFAULTS.offset, limit: a.limit ?? PAGE_DEFAULTS.limit };
     switch (decoded.kind) {
       case "test": {
         if (a.test_id !== undefined) return withNext(await r.getLabComparison(selection(decoded, a.test_id)), [
@@ -555,13 +591,13 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
           { tool: "maccabi_clinic_availability", arguments: { ref: a.ref }, why: "The first clinic window this provider offers. It opens a scheduling conversation and stops before any booking." },
         ]);
       case "vaccination_group": {
-        const paged = page(await r.getVaccinationDoses(Number(p.vaccine_group_code)), a);
-        return withNext(paged, nextPage("maccabi_detail", { ref: a.ref }, paged, a.limit));
+        const paged = page(await r.getVaccinationDoses(Number(p.vaccine_group_code)), bounds);
+        return withNext(paged, nextPage("maccabi_detail", { ref: a.ref }, paged, bounds.limit));
       }
       case "prescription": {
-        const paged = page(await r.listPrescriptionAlternatives(String(p.doc_id)), a);
+        const paged = page(await r.listPrescriptionAlternatives(String(p.doc_id)), bounds);
         return withNext(paged, [
-          ...nextPage("maccabi_detail", { ref: a.ref }, paged, a.limit),
+          ...nextPage("maccabi_detail", { ref: a.ref }, paged, bounds.limit),
           { tool: "maccabi_document", arguments: { ref: a.ref }, why: "The original prescription PDF, for a digital prescription with purchase status 1, 2 or 3." },
         ]);
       }
@@ -616,7 +652,9 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
       case "certificate": return r.getCertificatePdf(String(p.reference), range);
       case "additional_information": return r.getAdditionalInformationPdf(String(p.reference), range);
       case "mailing": {
-        const reference = a.reference ?? (p.reference === undefined ? undefined : String(p.reference));
+        // The ref's own reference first: preflight refuses a caller reference on a row that already
+        // carries one, so these two never both exist and a foreign reference cannot redirect the read.
+        const reference = p.reference === undefined ? a.reference : String(p.reference);
         if (reference === undefined) throw new SelectionError("This mailing has no document of its own. A type-3 row's documents are its tutorials[].pdf_reference values: pass one as reference.");
         return r.getNotificationPdf(reference, range);
       }
@@ -631,7 +669,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
   }
 
   server.registerTool("maccabi_detail", {
-    description: "Read the full record behind any row a list tool returned. The row is named by its `ref` alone, so identifiers from two different rows can never be paired. What comes back follows the row: a test row gives its laboratory values; a visit, inquiry, administrative request, upcoming appointment or directory provider gives its detail; a vaccination group gives its dose rows; a prescription gives its listed pharmacy alternatives; an imaging study gives its series and images. The other arguments only narrow what is already inside that row, and every one of them is copied verbatim from a payload you already have: `test_id` turns a test, latest-results or followed-results ref into one analyte's history, `series_instance_uid` with `sop_instance_uid` turn an imaging-study ref into one image's DICOM metadata, and `offset`/`limit` page a detail that returns rows. None of them selects a different record: each is checked against the freshly fetched payload the ref names, and a value that belongs to another row or another study is refused rather than fetched. Rows whose only content is a document say so and name maccabi_document.",
+    description: "Read the full record behind any row a list tool returned. The row is named by its `ref` alone, so identifiers from two different rows can never be paired. What comes back follows the row: a test row gives its laboratory values; a visit, inquiry, administrative request, upcoming appointment or directory provider gives its detail; a vaccination group gives its dose rows; a prescription gives its listed pharmacy alternatives; an imaging study gives its series and images. The other arguments only narrow what is already inside that row, and every one of them is copied verbatim from a payload you already have: `test_id` turns a test, latest-results or followed-results ref into one analyte's history, `series_instance_uid` with `sop_instance_uid` turn an imaging-study ref into one image's DICOM metadata, and `offset`/`limit` page the two details that are a list of rows, a vaccination group's doses and a prescription's alternatives - every other ref reads one record and returns it whole, so the pair is refused there rather than ignored. None of them selects a different record: each is checked against the freshly fetched payload the ref names, and a value that belongs to another row or another study is refused rather than fetched. Rows whose only content is a document say so and name maccabi_document.",
     inputSchema: detailSchema, annotations: publicTool,
   }, async a => {
     let decoded: DecodedRef;
@@ -646,7 +684,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
     return withOwner(async r => output(await detailFor(r, decoded, a)));
   });
   server.registerTool("maccabi_document", {
-    description: `Read the original PDF behind any row a list tool returned, embedded in the reply (maximum ${PDF_LIMIT / 1024 / 1024} MiB). Takes that row's \`ref\`, which already carries the date range, as-of date, period or parent id the download needs, so none of that has to be reassembled. Rows that carry exactly one document need only the ref: certificates, mailings, additional-information entries, hospital reports, quarterly billing reports, nursing-insurance reports, prescriptions and referrals. \`variant\` chooses between documents where a row has several: a test row offers attached_document (default), laboratory_report and english_covid_report, and a visit offers its summary. \`reference\` selects one attachment listed inside a row - a visit document, an inquiry document, an administrative attachment, a mailing tutorial - using a pdf_reference or attachments[].reference value from that row's own detail. \`test_id\` narrows a lab ref to one analyte, whose attached_document, comparison_list and comparison_graph then apply. \`irregular_only\` uses the source's own print checkbox on a laboratory report, not any medical judgement of this server's. All four narrow the ref rather than redirecting it: \`reference\` is looked up in the parent record's own freshly fetched attachment list and never becomes a URL on its own, so a reference taken from another row is refused rather than downloaded. The PDF may print identity details Maccabi put there; its URI is an inline resource, not a download link.`,
+    description: `Read the original PDF behind any row a list tool returned, embedded in the reply (maximum ${PDF_LIMIT / 1024 / 1024} MiB). Takes that row's \`ref\`, which already carries the date range, as-of date, period or parent id the download needs, so none of that has to be reassembled. Rows that carry exactly one document need only the ref: certificates, type-1 and type-2 mailings, additional-information entries, hospital reports, quarterly billing reports, nursing-insurance reports, prescriptions and referrals. \`variant\` chooses between documents where a row has several: a test row offers attached_document (default), laboratory_report and english_covid_report, and a visit offers its summary. \`reference\` selects one attachment listed inside a row - a visit document, an inquiry document, an administrative attachment, a mailing tutorial - using a pdf_reference or attachments[].reference value from that row's own detail. \`test_id\` narrows a lab ref to one analyte, whose attached_document, comparison_list and comparison_graph then apply. \`irregular_only\` uses the source's own print checkbox on a laboratory report, not any medical judgement of this server's. All four narrow the ref rather than redirecting it, and a selector the row has no use for is refused rather than dropped: \`reference\` is looked up in the parent record's own freshly fetched attachment list and never becomes a URL on its own, so a reference taken from another row is refused rather than downloaded. The PDF may print identity details Maccabi put there; its URI is an inline resource, not a download link.`,
     inputSchema: documentSchema, annotations: publicTool,
   }, async a => {
     let decoded: DecodedRef;
@@ -682,7 +720,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
     z.object({ section: z.enum(Object.keys(accountSections) as [keyof typeof accountSections, ...(keyof typeof accountSections)[]]) }).strict(), async (r, a) => accountSections[a.section](r));
   register("maccabi_medical_recommendations", "Read the recommendation text and table from the legacy medical-recommendations page, in the source's own clinical wording. Only the one captured single-section layout is supported, and this is not a complete history of recommendations.", z.object({}).strict(), r => r.getMedicalRecommendations());
   register("maccabi_medical_summary", "Read the legacy summary page that pairs selected medications with selected laboratory results, as text and tables in the source's wording. This is neither a complete medical history nor the English medical summary PDF, which maccabi_report returns.", z.object({}).strict(), r => r.getSelectedMedicalSummary());
-  register("maccabi_hospital_visits", "List hospital and emergency-room admissions. `as_of` is required and anchors the lookback the source page applies (three years in the captured settings); an optional paired from/to narrows it and must end no later than as_of. Rows carry a `ref` for maccabi_document, which returns the admission's original report. Retention beyond the lookback is unverified.",
+  register("maccabi_hospital_visits", "List hospital and emergency-room admissions. `as_of` is required and anchors the lookback the source page applies (three years in the captured settings): it is the end of the window, so pass today's date for the current one. An optional paired from/to narrows it and must end no later than as_of. Rows carry a `ref` for maccabi_document, which returns the admission's original report. Retention beyond the lookback is unverified.",
     z.object({ ...pageShape, as_of: date, from: date.optional(), to: date.optional() }).strict().refine(a => a.from === undefined && a.to === undefined || a.from !== undefined && a.to !== undefined && a.from <= a.to && a.to <= a.as_of, { message: "Provide paired from/to, ordered and no later than as_of" }),
     async (r, a) => {
       const dates = a.from && a.to ? { from: a.from, to: a.to } : undefined;
@@ -739,11 +777,15 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
       const paged = page(rows, a, row => { const request = text(row.request_id), doc = text(row.doc_id); return request === undefined || doc === undefined ? undefined : encodeRef("test", { request_id: request, doc_id: doc }); });
       const first = firstRef(paged);
       const withDocument = paged.data.find(row => row.has_document === true)?.ref;
+      // The source attaches no document to two kinds of row: laboratory results, which have their own
+      // report flow, and imaging studies, which it opens in a viewer. So that is what identifies a
+      // laboratory row here, and only a laboratory row has a laboratory report to ask for.
+      const laboratory = paged.data.find(row => row.has_document === false && row.type !== "imaging_study")?.ref;
       return withNext({ ...paged, categories: result.data.categories }, [
         ...nextPage("maccabi_tests", a.year === undefined ? {} : { year: a.year }, paged, a.limit),
         ...(first ? [{ tool: "maccabi_detail", arguments: { ref: first }, why: "The structured result behind one row. Each row carries its own ref." }] : []),
         ...(withDocument ? [{ tool: "maccabi_document", arguments: { ref: withDocument }, why: "The original document attached to a row with has_document=true." }] : []),
-        ...(first ? [{ tool: "maccabi_document", arguments: { ref: first, variant: "laboratory_report" }, why: "The whole original laboratory report PDF for a laboratory row." }] : []),
+        ...(laboratory ? [{ tool: "maccabi_document", arguments: { ref: laboratory, variant: "laboratory_report" }, why: "The whole original laboratory report PDF. Each laboratory row carries its own ref." }] : []),
       ]);
     });
   register("maccabi_imaging_studies", "List the member's imaging studies: the test rows whose scans are held in the external MedDream viewer Maccabi hands them off to, rather than as an attached document. Each row carries a `ref` for maccabi_detail, which reads the study's series and images from that viewer. The row's request_id is the study's DICOM Study Instance UID, verified byte-for-byte against a live handoff. These rows have no attached document, so maccabi_document correctly refuses them.",
@@ -840,7 +882,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
         ...(permit ? [{ tool: "maccabi_document", arguments: { ref: permit.ref, reference: permit.pdf_reference }, why: "The document of an automatic_sick_permit row, straight from the list." }] : []),
       ]);
     });
-  register("maccabi_past_visits", "List the member's past visits - who was seen, when, and for what service. For appointments that have not happened yet use maccabi_upcoming_appointments. Each row carries a `ref`: maccabi_detail reads the visit and the documents attached to it, and maccabi_document returns its summary PDF where has_summery_file is true. This does not establish complete lifetime history.",
+  register("maccabi_past_visits", "List the member's past visits - who was seen, when, and for what service. For appointments that have not happened yet use maccabi_upcoming_appointments. Each row carries a `ref`: maccabi_detail reads the visit and the documents attached to it, and maccabi_document returns its summary PDF where has_summery_file is true - that is Maccabi's own spelling of the list field and it is kept exactly as sent, while maccabi_detail reports the same fact on the visit as has_summary_pdf. This does not establish complete lifetime history.",
     z.object(pageShape).strict(), async (r, a) => {
       const result = await r.listVisits();
       const paged = page(result, a, row => { const appointment = text(row.appointment_id); return appointment === undefined ? undefined : encodeRef("visit", { appointment_id: appointment }); });
@@ -863,7 +905,7 @@ export function createMaccabiMcpServer(options: MaccabiMcpOptions): McpServer {
         ...(first ? [{ tool: "maccabi_detail", arguments: { ref: first }, why: "Provider contacts and visit instructions for one appointment. Instruction links are returned, not fetched." }] : []),
       ]);
     });
-  register("maccabi_assigned_doctor", "Read which doctor the member was assigned to at a given moment - the ascribed family physician. `as_of` is timezone-free calendar text, YYYY-MM-DDTHH:mm:ss, and is used exactly as written with no timezone interpretation added.", z.object({ as_of: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use timezone-free YYYY-MM-DDTHH:mm:ss") }).strict(), (r, a) => r.getAscribedProvider(a.as_of));
+  register("maccabi_assigned_doctor", "Read which doctor the member was assigned to at a given moment - the ascribed family physician. `as_of` is the moment being asked about, so pass today's date and time for the current assignment. It is timezone-free calendar text, YYYY-MM-DDTHH:mm:ss, and is used exactly as written with no timezone interpretation added.", z.object({ as_of: z.string().describe("A timezone-free calendar moment written YYYY-MM-DDTHH:mm:ss, for example 2026-01-31T09:00:00, used exactly as written.").regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, "Use timezone-free YYYY-MM-DDTHH:mm:ss") }).strict(), (r, a) => r.getAscribedProvider(a.as_of));
   register("maccabi_recent_providers", "List the providers and clinics this adult member has had appointments with recently, with clinic addresses. Each row carries a `ref`: maccabi_detail reads the clinic, schedule and provider record, maccabi_appointment_eligibility says whether booking is permitted, and maccabi_clinic_availability reads the first free window.",
     z.object(pageShape).strict(), async (r, a) => {
       const result = await r.listRecentProviders();

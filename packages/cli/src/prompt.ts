@@ -1,8 +1,18 @@
+/**
+ * Raw mode delivers Ctrl-C as a data byte rather than a signal, so cancelling a prompt is a normal
+ * outcome and carries its own type; the caller would otherwise report it as a defect in this client.
+ */
+export class PromptCancelled extends Error {
+  constructor() { super("The prompt was cancelled."); }
+}
+export class PromptUnavailable extends Error {
+  constructor() { super("An interactive terminal is required."); }
+}
 /** Small TTY-only prompt; entered credentials never appear in argv, history, or echo. */
 export function terminalPrompt(label: string, hidden = false): Promise<string> {
   const input = process.stdin;
   const output = process.stderr;
-  if (!input.isTTY || !output.isTTY) return Promise.reject(new Error("INTERACTIVE_TERMINAL_REQUIRED"));
+  if (!input.isTTY || !output.isTTY) return Promise.reject(new PromptUnavailable());
   return new Promise((resolve, reject) => {
     let value = "";
     let finished = false;
@@ -15,7 +25,7 @@ export function terminalPrompt(label: string, hidden = false): Promise<string> {
       input.setRawMode(previousRaw);
       input.pause();
       output.write("\n");
-      cancelled ? reject(new Error("INPUT_CANCELLED")) : resolve(value);
+      cancelled ? reject(new PromptCancelled()) : resolve(value);
     };
     const onError = () => finish(true);
     const onData = (chunk: Buffer) => {

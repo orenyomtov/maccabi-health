@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -51,5 +52,19 @@ describe('release-only npm publication preparation', () => {
       expect(JSON.parse(await readFile(new URL('package.json',root),'utf8')).version).toBe('1.2.3');
       await expect(prepareRelease(event('invalid'),root,async () => {throw new Error('must not fetch');})).rejects.toThrow(/Use v/);
     } finally { await rm(directory,{recursive:true,force:true}); }
+  });
+});
+
+describe('published manifest', () => {
+  const shipped = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  // These two are the only dependencies whose types reach the shipped .d.ts files. An exact pin on
+  // either gives a TypeScript host that also depends on it a second nested copy and a type-identity
+  // error at its own call site, which skipLibCheck does not suppress.
+  test('dependencies that leak types into the public surface are range-specified', () => {
+    for (const name of ['@modelcontextprotocol/server', 'tough-cookie'])
+      expect(shipped.dependencies[name]).toMatch(/^\^/);
+  });
+  test('the exports map resolves the manifest', () => {
+    expect(shipped.exports['./package.json']).toBe('./package.json');
   });
 });

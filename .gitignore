@@ -43,5 +43,5 @@ exports/
 # Internal research, handoffs, local tooling, and archived documentation
 /.internal/
 
-# Compatibility symlink into ignored /.internal/ for an existing watcher; keep the link, do not ship it
+# Local fixtures symlink (do not ship)
 /docs/research/fixtures

@@ -1,19 +1,6 @@
 import { Cookie, CookieJar, type SerializedCookieJar } from "tough-cookie";
-import { name, version, bugs } from "../../../package.json";
 import { MaccabiError, ReauthenticationRequired, UpstreamError } from "./errors";
 import type { MaccabiSession } from "./session";
-
-/**
- * How this client identifies itself: our name, our version and where to complain about us. Node's
- * fetch sends no User-Agent at all, which is worth fixing on its own - an operator who wants to
- * rate-limit or block this client should be able to do it on sight.
- *
- * It is deliberately not a browser string. The public directory host is behind a bot filter that
- * scores each request, and an honest UA does not get past it: it let one call through and then
- * failed the next three identical ones. Only a full browser impersonation moved the needle, which
- * is not something this client does. See docs/CAPABILITIES.md.
- */
-export const USER_AGENT = `${name}/${version} (+${bugs.url})`;
 
 export const LOGIN_ORIGIN = "https://mac.maccabi4u.co.il";
 export const PORTAL_ORIGIN = "https://online.maccabi4u.co.il";
@@ -179,12 +166,13 @@ export class MaccabiTransport {
     return { ...serialized, cookies: serialized.cookies.filter(cookie => cookie.domain !== viewerHost) };
   }
 
-  /** Drop any viewer cookies before a handoff so a jar saved by an older build still replays cleanly. */
+  /**
+   * Drop any viewer cookies before a handoff so a jar saved by an older build still replays cleanly.
+   * Domain-wide, on the same rule `#exportPortalCookies` filters by: a path-matched lookup would
+   * leave anything the viewer stored under a path of its own sitting in the jar.
+   */
   async clearViewerCookies(): Promise<void> {
-    const viewerHost = new URL(VIEWER_ORIGIN).hostname;
-    for (const cookie of await this.#jar.getCookies(VIEWER_ORIGIN + "/")) {
-      if (cookie.domain === viewerHost && cookie.key) await this.#jar.store.removeCookie(viewerHost, cookie.path ?? "/", cookie.key);
-    }
+    await this.#jar.store.removeCookies(new URL(VIEWER_ORIGIN).hostname, null);
   }
 
   /** Mid-login cookies for a challenge another process finishes; exportSession refuses before sign-in completes. */
@@ -310,13 +298,6 @@ export class MaccabiTransport {
       url = next;
     }
     throw new UpstreamError("TOO_MANY_REDIRECTS");
-  }
-
-  async requestJson<T = unknown>(input: string | URL, init: TransportRequestInit = {}): Promise<T> {
-    const response = await this.request(input, init);
-    if (!response.ok) { await discard(response); throw new UpstreamError("HTTP_ERROR", response.status); }
-    if (!response.headers.get("content-type")?.toLowerCase().includes("json")) { await discard(response); throw new UpstreamError("EXPECTED_JSON", response.status); }
-    return readResponseBody(() => response.json() as Promise<T>, new UpstreamError("INVALID_JSON", response.status));
   }
 
   #parsedUrl(input: string | URL, base: string | URL = PORTAL_ORIGIN): URL {

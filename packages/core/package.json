@@ -16,7 +16,7 @@
   "exports": "./src/index.ts",
   "dependencies": {
     "entities": "8.1.0",
-    "tough-cookie": "6.0.2",
+    "tough-cookie": "^6.0.2",
     "cheerio": "1.2.0"
   }
 }

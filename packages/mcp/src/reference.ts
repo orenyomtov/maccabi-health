@@ -99,8 +99,3 @@ export function decodeRef(token: string): DecodedRef {
   if (!payload.success) throw new RefTokenError(`This ${kind} ref does not carry the identifiers that kind needs. Re-run the list tool that produced the row.`);
   return { kind, payload: payload.data as Record<string, string | number> };
 }
-
-/** Reads a token's kind without committing to its payload, for error text that names what was passed. */
-export function refKind(token: string): RefKind | null {
-  try { return decodeRef(token).kind; } catch { return null; }
-}

@@ -15,7 +15,7 @@ Bugs, unsupported flows and feature requests go to the [issue tracker](https://g
 
 ## Architecture
 
-Add operations in order: `packages/core`, then a thin CLI wrapper, then MCP. Core owns authentication, cookie transport, account-bound readers, and the anonymous public directory client, with no prompts or MCP transport. The CLI owns the session file in the user's config directory. MCP uses the official SDK for stdio and loopback Streamable HTTP; both share the CLI's lazy credential resolver.
+Add operations in order: `packages/core`, then a thin CLI wrapper, then MCP. Core owns authentication, cookie transport, account-bound readers, and the anonymous public directory client, with no prompts or MCP transport. The CLI owns the session file in the user's config directory. MCP uses the official SDK for stdio and loopback Streamable HTTP. Stdio resolves credentials lazily through `localSessionResolver` (the CLI's `session.json`); HTTP uses `subjectSessionResolver` and never reads `session.json`.
 
 ## Upstream contracts
 

@@ -7,11 +7,13 @@ export const SESSION_TTL_MS = 10 * 60 * 1000;
 export const MAX_SESSIONS = 8;
 export const SMS_WINDOW_MS = 60 * 1000;
 export const MAX_SMS_PER_WINDOW = 5;
-export const COOKIE_NAME = "maccabi_login";
+const COOKIE_PREFIX = "maccabi_login_";
 
 export interface AuthorizeParams { clientId: string; redirectUri: string; state?: string; codeChallenge: string; resource: string; scope: string; clientLabel: string }
 export interface AuthorizeSession {
   id: string;
+  /** Proves the browser holds this session's cookie. Unlike the id and the CSRF token it is never rendered into a page. */
+  secret: string;
   csrf: string;
   expiresAt: number;
   params: AuthorizeParams;
@@ -44,8 +46,15 @@ export class AuthorizeSessions {
 
   create(params: AuthorizeParams): AuthorizeSession | null {
     this.sweep();
-    if (this.#sessions.size >= MAX_SESSIONS) return null;
-    const session: AuthorizeSession = { id: newId(), csrf: newId(), expiresAt: this.now() + SESSION_TTL_MS, params, phase: "id", pending: null };
+    if (this.#sessions.size >= MAX_SESSIONS) {
+      // A session still on the ID form with no challenge has nothing in flight upstream, so the
+      // oldest of those gives way. Closing a tab is invisible here and nothing else frees a slot
+      // before the ten-minute TTL, so without this the member simply cannot sign in for that long.
+      const idle = [...this.#sessions.values()].find(session => session.phase === "id" && session.pending === null);
+      if (!idle) return null;
+      this.#sessions.delete(idle.id);
+    }
+    const session: AuthorizeSession = { id: newId(), secret: newId(), csrf: newId(), expiresAt: this.now() + SESSION_TTL_MS, params, phase: "id", pending: null };
     this.#sessions.set(session.id, session);
     return session;
   }
@@ -60,10 +69,13 @@ export class AuthorizeSessions {
 
   delete(id: string): void { this.#sessions.delete(id); }
   sweep(): void { for (const [id, session] of this.#sessions) if (session.expiresAt <= this.now()) this.#sessions.delete(id); }
-  get size(): number { return this.#sessions.size; }
 
   checkCsrf(session: AuthorizeSession, presented: string | undefined): boolean {
     return presented !== undefined && equalTokens(session.csrf, presented);
+  }
+  checkCookie(session: AuthorizeSession, header: string | undefined): boolean {
+    const presented = readCookie(header, session.id);
+    return presented !== undefined && equalTokens(session.secret, presented);
   }
 
   /**
@@ -79,17 +91,22 @@ export class AuthorizeSessions {
   }
 }
 
-export function sessionCookie(id: string): string {
-  // Path=/authorize keeps it off /mcp and /token; a cookie those endpoints can see would be a CSRF surface on them.
-  return `${COOKIE_NAME}=${id}; HttpOnly; SameSite=Lax; Path=/authorize; Max-Age=${SESSION_TTL_MS / 1000}`;
+/**
+ * One cookie per session rather than one fixed name. A browser profile holds them all at once, so a
+ * second sign-in tab cannot overwrite the first one's - and neither can a second server, because
+ * cookies ignore the port. Path=/authorize keeps them off /mcp and /token; a cookie those endpoints
+ * can see would be a CSRF surface on them.
+ */
+export function sessionCookie(session: AuthorizeSession): string {
+  return `${COOKIE_PREFIX}${session.id}=${session.secret}; HttpOnly; SameSite=Lax; Path=/authorize; Max-Age=${SESSION_TTL_MS / 1000}`;
 }
-export function clearedCookie(): string {
-  return `${COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/authorize; Max-Age=0`;
+export function clearedCookie(id: string): string {
+  return `${COOKIE_PREFIX}${id}=; HttpOnly; SameSite=Lax; Path=/authorize; Max-Age=0`;
 }
-export function readCookie(header: string | undefined): string | undefined {
+function readCookie(header: string | undefined, id: string): string | undefined {
   for (const part of (header ?? "").split(";")) {
     const [name, ...rest] = part.trim().split("=");
-    if (name === COOKIE_NAME) return rest.join("=");
+    if (name === `${COOKIE_PREFIX}${id}`) return rest.join("=");
   }
   return undefined;
 }

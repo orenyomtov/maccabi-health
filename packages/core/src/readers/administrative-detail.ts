@@ -235,7 +235,7 @@ export function projectAdministrativeDetail(
     obligation_details,
     decision,
     unsupported_sections: [
-      ...(detail.extended_properties !== undefined && detail.extended_properties !== null ? ["extended_properties" as const] : []),
+      ...(extended && obligation_details === null && decision === null ? ["extended_properties" as const] : []),
       ...(candidateCaseDocuments && !features ? ["feature_gated_case_documents" as const] : []),
       ...(detail.provider_document !== undefined && detail.provider_document !== null && !projectedProviderDocument ? ["provider_document" as const] : []),
     ],

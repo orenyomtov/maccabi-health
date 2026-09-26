@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report privately through [GitHub Security Advisories](https://github.com/orenyomtov/maccabi-health/security/advisories/new). Do not open a public issue for a vulnerability.
+Report privately through [GitHub Security Advisories](https://github.com/orenyomtov/maccabi-health/security/advisories/new). Do not open a public issue for a vulnerability. If that form is not available to you, open an issue saying only that you have a security report and asking for a private channel, with no details of the problem in it.
 
 Anything that is not a vulnerability (a failed read, a wrong value, a missing record, an unsupported flow, a feature request) belongs in the [issue tracker](https://github.com/orenyomtov/maccabi-health/issues) instead.
 
@@ -19,7 +19,7 @@ Only the latest published version gets fixes. This project is pre-1.0 and has no
 In scope: anything in this repository (the core library, the CLI, and both MCP transports). Of particular interest:
 
 - Anything that lets one member's session, credential or clinical data reach another member.
-- Cookie or bearer material leaking outside `mac.maccabi4u.co.il` and `online.maccabi4u.co.il`, or into logs, error messages or command arguments.
+- Cookie or bearer material leaking outside `mac.maccabi4u.co.il`, `online.maccabi4u.co.il` and `meddreamy.maccabi4u.co.il`, or into logs, error messages or command arguments.
 - Bypasses of the local HTTP transport's loopback, Host/Origin or OAuth checks.
 - A read operation that turns out to perform an upstream write.
 

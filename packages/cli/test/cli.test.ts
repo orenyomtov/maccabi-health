@@ -3,8 +3,9 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "n
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
-import { ISSUES_URL, ReadOperationError, ReauthenticationRequired, UpstreamError, type MaccabiSession, type PendingLogin } from "@maccabi/core";
+import { ISSUES_URL, MaccabiError, ReadOperationError, ReauthenticationRequired, UpstreamError, type MaccabiSession, type PendingLogin } from "@maccabi/core";
 import { runCli, type CliDependencies, type Connected } from "../src/cli";
+import { PromptCancelled, PromptUnavailable } from "../src/prompt";
 import { configDirectory, FilePendingLoginStore, FileSessionStore, SessionStoreError, type SavedLogin } from "../src/store";
 
 const session: MaccabiSession = {
@@ -62,6 +63,8 @@ function fixture(initial: SavedLogin | null = saved, initialPending: PendingLogi
       cancelLogin: async () => { calls.push("cancel"); },
     }),
     stdout: text => { output += text; }, stderr: text => { error += text; },
+    startKeepAlive: async () => { calls.push("keep-alive"); },
+    stopKeepAlive: async () => { calls.push("stop-keep-alive"); },
     savePdf: async (_path, bytes) => { expect(new TextDecoder().decode(bytes)).toBe("%PDF-synthetic"); calls.push("save-pdf"); },
   };
   return { deps, calls, phones, smsPhones, prompts, output: () => output, error: () => error, stored: () => stored, pending: () => pending };
@@ -147,7 +150,11 @@ describe("CLI dispatch", () => {
     expect(JSON.parse(all.output()).commands.map((c: { name: string }) => c.name)).toContain("mcp");
     const focused = fixture();
     expect(await runCli(["help", "mcp", "--json"], focused.deps)).toBe(0);
-    expect(JSON.parse(focused.output()).commands.map((c: { name: string }) => c.name)).toEqual(["mcp"]);
+    const mcp = JSON.parse(focused.output()).commands[0];
+    expect(mcp.name).toBe("mcp");
+    expect(mcp.notes).toContain("maccabi login");
+    expect(mcp.notes).toContain("`--http` does not");
+    expect(mcp.notes).not.toContain("authenticate separately");
     expect(focused.calls).toEqual([]);
   });
 
@@ -753,7 +760,7 @@ describe("CLI dispatch", () => {
     expect(await runCli(["login"], f.deps)).toBe(0);
     expect(f.prompts.every(prompt => prompt.hidden)).toBe(true);
     expect(f.prompts).toHaveLength(2); // One distinct SMS choice needs only ID and OTP prompts.
-    expect(f.calls).toEqual(["load", "begin", "send-sms", "verify-otp", "connect", "save"]);
+    expect(f.calls).toEqual(["load", "begin", "send-sms", "verify-otp", "connect", "save", "stop-keep-alive", "keep-alive"]);
     expect(f.stored()?.owner).toEqual(owner);
     expect(f.output()).not.toContain("123456");
     expect(f.output()).not.toContain("synthetic.session.token");
@@ -807,11 +814,19 @@ describe("CLI dispatch", () => {
   test("--code finishes the persisted challenge, binds its owner and clears the pending file", async () => {
     const f = fixture(null, challenge());
     expect(await runCli(["login", "--code", "123456", "--json"], f.deps)).toBe(0);
-    expect(f.calls).toEqual(["load-pending", "restore-pending", "verify-otp", "connect", "save", "delete-pending"]);
-    expect(JSON.parse(f.output())).toEqual({ status: "signed-in", persistence: "session-file" });
+    expect(f.calls).toEqual(["load-pending", "restore-pending", "verify-otp", "connect", "save", "delete-pending", "stop-keep-alive", "keep-alive"]);
+    expect(JSON.parse(f.output())).toEqual({ status: "signed-in", persistence: "session-file", keepAlive: "started" });
     expect(f.stored()?.owner).toEqual(owner);
     expect(f.pending()).toBeNull();
     expect(f.output()).not.toContain("123456");
+  });
+
+  test("--no-keep-alive finishes the login without starting or stopping a renewal", async () => {
+    const f = fixture(null, challenge());
+    expect(await runCli(["login", "--code", "123456", "--no-keep-alive", "--json"], f.deps)).toBe(0);
+    expect(f.calls).not.toContain("keep-alive");
+    expect(f.calls).not.toContain("stop-keep-alive");
+    expect(JSON.parse(f.output()).keepAlive).toBe("disabled");
   });
 
   test("a wrong code ends the challenge instead of allowing another attempt", async () => {
@@ -1059,7 +1074,7 @@ describe("CLI dispatch", () => {
   test("local logout clears the session and any waiting challenge without an upstream request", async () => {
     const f = fixture(saved, challenge());
     expect(await runCli(["logout"], f.deps)).toBe(0);
-    expect(f.calls).toEqual(["delete", "delete-pending"]);
+    expect(f.calls).toEqual(["stop-keep-alive", "delete", "delete-pending"]);
     expect(f.stored()).toBeNull();
     expect(f.pending()).toBeNull();
     expect(JSON.parse(f.output())).toEqual({ status: "local-session-removed" });
@@ -1164,6 +1179,150 @@ test("network timeouts have actionable JSON errors and keep the session without 
     expect(f.stored()).toEqual(saved);
     expect(f.prompts).toEqual([]);
   });
+
+  test("a --out path that cannot be written names the path problem instead of asking for a bug report", async () => {
+    for (const [errno, code] of [
+      ["EEXIST", "OUTPUT_FILE_EXISTS"], ["ENOENT", "OUTPUT_DIRECTORY_MISSING"], ["EISDIR", "OUTPUT_PATH_IS_DIRECTORY"],
+      ["EACCES", "OUTPUT_NOT_WRITABLE"], ["EPERM", "OUTPUT_NOT_WRITABLE"],
+    ] as const) {
+      const f = fixture();
+      f.deps.connect = async () => ({ readers: { getVaccinationCertificatePdf: async () => ({ data: new TextEncoder().encode("%PDF-synthetic") }), currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
+      f.deps.savePdf = async () => { throw Object.assign(new Error("synthetic filesystem failure"), { code: errno }); };
+      expect(await runCli(["vaccination-pdf", "--out", "synthetic-certificate.pdf", "--json"], f.deps)).toBe(1);
+      expect(JSON.parse(f.error()).error.code).toBe(code);
+      // Re-running with the same --out is the ordinary thing to do, and refusing to overwrite is documented.
+      expect(f.error()).not.toContain(ISSUES_URL);
+      expect(f.output()).toBe("");
+    }
+  });
+
+  test("each usage mistake names itself and points at the help that answers it", async () => {
+    for (const [argv, fragment] of [
+      [["not-a-real-command"], "Unknown command"],
+      [["labs", "stray-argument"], "Unexpected argument"],
+      [["labs", "--not-an-option", "value"], "Unknown or repeated option"],
+      [["visits", "--limit", "2", "--limit", "3"], "Unknown or repeated option"],
+      [["labs", "--year"], "That option needs a value"],
+    ] as const) {
+      const f = fixture();
+      expect(await runCli([...argv, "--json"], f.deps)).toBe(2);
+      const reported = JSON.parse(f.error()).error;
+      expect(reported.code).toBe("INVALID_USAGE");
+      expect(reported.message).toContain(fragment);
+      // A flag mistake is answered by the command's own help; the top-level index lists no flags.
+      if (argv[0] !== "not-a-real-command" && fragment !== "Unexpected argument") expect(reported.message).toContain(`maccabi help ${argv[0]}`);
+      expect(f.calls).toEqual([]);
+      expect(f.output()).toBe("");
+    }
+  });
+
+  test("a read that succeeded survives a config directory that cannot be written", async () => {
+    const f = fixture();
+    f.deps.store = { ...f.deps.store, save: async () => { f.calls.push("save"); throw new SessionStoreError(); } };
+    expect(await runCli(["prescriptions", "--json"], f.deps)).toBe(0);
+    expect(f.output()).toContain("תרופה סינתטית");
+    expect(f.error()).toContain("could not be saved");
+    expect(f.calls).toEqual(["load", "connect", "prescriptions", "save"]);
+  });
+
+  test("focused JSON help ships only the topics its own commands name, and no catalog-wide caveats", async () => {
+    const untopiced = fixture();
+    expect(await runCli(["help", "labs", "--json"], untopiced.deps)).toBe(0);
+    const labs = JSON.parse(untopiced.output());
+    expect(labs.topics).toEqual({});
+    expect(labs.limitations).toBeUndefined();
+    expect(labs.notImplemented).toBeUndefined();
+    // The text form has always filtered this way; the two help forms must not disagree about caveats.
+    const text = fixture();
+    expect(await runCli(["help", "labs"], text.deps)).toBe(0);
+    expect(text.output()).not.toContain("Topics (");
+
+    const imaging = fixture();
+    expect(await runCli(["help", "imaging-study", "--json"], imaging.deps)).toBe(0);
+    expect(Object.keys(JSON.parse(imaging.output()).topics)).toEqual(["imaging-viewer"]);
+
+    const all = fixture();
+    expect(await runCli(["help", "--json"], all.deps)).toBe(0);
+    const full = JSON.parse(all.output());
+    expect(Object.keys(full.topics).sort()).toEqual(["imaging-viewer", "private-files"]);
+    expect(full.limitations.length).toBeGreaterThan(0);
+    expect(all.output().length).toBeGreaterThan(untopiced.output().length * 4);
+  });
+
+  test("every list command advertises the paging flags the help footer promises", async () => {
+    const f = fixture();
+    expect(await runCli(["help", "--json"], f.deps)).toBe(0);
+    const commands = JSON.parse(f.output()).commands as { usage: string; options: string[] }[];
+    const paged = commands.filter(command => command.options.includes("limit"));
+    expect(paged.length).toBeGreaterThan(0);
+    for (const command of paged) expect(command.usage).toContain("[--limit N] [--offset N]");
+    for (const command of commands) if (!command.options.includes("limit")) expect(command.usage).not.toContain("--limit");
+  });
+
+  test("neither help form claims mcp accepts --json", async () => {
+    const machine = fixture();
+    expect(await runCli(["--json"], machine.deps)).toBe(0);
+    expect(JSON.parse(machine.output()).json).toContain("except `mcp`");
+    const bare = fixture();
+    expect(await runCli([], bare.deps)).toBe(0);
+    expect(bare.output()).toContain("any command except mcp");
+    const full = fixture();
+    expect(await runCli(["help"], full.deps)).toBe(0);
+    expect(full.output()).toContain("All commands except mcp accept");
+  });
+
+  test("interrupting the interactive login reports a cancellation, not a defect in this client", async () => {
+    for (const stopAt of [1, 2]) { // the ID prompt, then the SMS-code prompt after the code has gone out
+      const f = fixture(null);
+      let asked = 0;
+      f.deps.prompt = async () => { if (++asked === stopAt) throw new PromptCancelled(); return ["012345678", "123456"][asked - 1]!; };
+      expect(await runCli(["login"], f.deps)).toBe(3);
+      expect(f.error()).toContain("LOGIN_CANCELLED");
+      expect(f.error()).toContain("no code was verified");
+      expect(f.error()).not.toContain(ISSUES_URL);
+      expect(f.stored()).toBeNull();
+      expect(f.calls).toContain("cancel");
+    }
+    const noTerminal = fixture(null);
+    noTerminal.deps.prompt = async () => { throw new PromptUnavailable(); };
+    expect(await runCli(["login"], noTerminal.deps)).toBe(3);
+    expect(noTerminal.error()).toContain("INTERACTIVE_LOGIN_REQUIRED");
+    expect(noTerminal.error()).toContain("maccabi login --id <id>");
+  });
+
+  test("a mistyped phone menu answer re-prompts instead of ending the login", async () => {
+    const f = fixture(null);
+    f.phones.push({ index: 2, label: "Phone ending 34", display: "ending 34", smsAvailable: true });
+    const answers = ["012345678", "2", "not-a-number", "3", "123456"];
+    f.deps.prompt = async () => answers.shift()!;
+    expect(await runCli(["login"], f.deps)).toBe(0);
+    expect(f.smsPhones).toEqual([2]);
+    expect(f.error()).toContain("Enter one of the listed numbers: 1, 3.");
+    expect(f.calls).toEqual(["load", "begin", "send-sms", "verify-otp", "connect", "save", "stop-keep-alive", "keep-alive"]);
+    expect(answers).toEqual([]);
+  });
+
+  test("a --phone that is not on the list names the numbers this ID offers and sends nothing", async () => {
+    const f = fixture(null);
+    f.phones.push({ index: 2, label: "Phone ending 34", display: "ending 34", smsAvailable: true });
+    expect(await runCli(["login", "--id", "012345678", "--phone", "2", "--json"], f.deps)).toBe(3);
+    const reported = JSON.parse(f.error()).error;
+    expect(reported.code).toBe("INVALID_PHONE_CHOICE");
+    expect(reported.message).toContain("1, 3");
+    expect(f.calls).not.toContain("send-sms");
+    expect(f.pending()).toBeNull();
+    expect(f.error()).not.toContain(ISSUES_URL);
+  });
+
+  test("an ID with no SMS-capable number says so instead of blaming the operation", async () => {
+    const f = fixture(null);
+    f.deps.createAuth = (create => () => ({ ...create(), beginLogin: async () => { throw new UpstreamError("SMS_NOT_AVAILABLE"); } }))(f.deps.createAuth);
+    expect(await runCli(["login", "--id", "012345678", "--json"], f.deps)).toBe(1);
+    const reported = JSON.parse(f.error()).error;
+    expect(reported.code).toBe("SMS_NOT_AVAILABLE");
+    expect(reported.message).toContain("No SMS-capable phone number");
+    expect(f.calls).not.toContain("send-sms");
+  });
 });
 
 describe("saved session file", () => {
@@ -1253,6 +1412,20 @@ describe("saved session file", () => {
       expect(await store.load()).toEqual(saved);
       expect(warnings.mock.calls.map(call => String(call[0]))).toEqual([expect.stringContaining("readable by other users")]);
     } finally { warnings.mockRestore(); }
+  });
+
+  test("the permission warning stays silent on Windows, where the mode bits carry no information", async () => {
+    const path = join(await temporary(), "session.json");
+    const store = new FileSessionStore(path);
+    await store.save(saved);
+    await chmod(path, 0o644);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    const warnings = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(await store.load()).toEqual(saved);
+      expect(warnings.mock.calls).toEqual([]);
+    } finally { warnings.mockRestore(); Object.defineProperty(process, "platform", descriptor); }
   });
 
   test("a pending login round trips in its own protected file and is forgotten on delete", async () => {
@@ -1378,18 +1551,23 @@ describe("anonymous public directory CLI", () => {
       for (const command of ["directory-search", "directory-detail"]) {
         expect(await runCli([command, "--category", "doctors", "--field", "synthetic-key", ...(command === "directory-detail" ? ["--reference", "provider-" + "a".repeat(32)] : []), "--json"], f.deps)).toBe(1);
         expect(f.calls).toEqual([]); expect(f.stored()).toEqual(saved); expect(f.output()).toBe("");
+        // The challenge has its own branch above this one, so anything reaching here is something else
+        // and has to say so - otherwise a caller reads every directory failure as the bot filter.
+        expect(f.error()).toContain("not with the host's bot challenge");
       }
     }
   });
 });
 
-test("anonymous directory configuration error gives safe browser guidance without touching saved state", async () => {
-  const f = fixture(); const fail = async (): Promise<never> => { throw new UpstreamError("DIRECTORY_CONFIGURATION_UNAVAILABLE"); };
+test("anonymous directory bot challenge passes core's sentence through without touching saved state", async () => {
+  // Core owns the wording, so the CLI is asserted on pass-through rather than on a copy of it.
+  const message = "The public directory host served a bot-challenge page instead of its own data. Synthetic marker.";
+  const f = fixture(); const fail = async (): Promise<never> => { throw new MaccabiError("DIRECTORY_BOT_CHALLENGE", message); };
   f.deps.createDirectory = () => ({ listProviderFields: fail, listProviderCities: fail, searchProviders: fail, getProviderDetails: fail });
   expect(await runCli(["directory-search", "--category", "doctors", "--field", "synthetic-key", "--json"], f.deps)).toBe(1);
   const error = JSON.parse(f.error()).error;
-  expect(error.code).toBe("DIRECTORY_CONFIGURATION_UNAVAILABLE"); expect(error.exitCode).toBe(1);
-  expect(error.message).toContain("bot-challenge page"); expect(error.message).toContain("official directory in a browser"); expect(error.message).toContain("no search was submitted");
+  expect(error.code).toBe("DIRECTORY_BOT_CHALLENGE"); expect(error.exitCode).toBe(1);
+  expect(error.message).toBe(message);
   expect(f.output()).toBe(""); expect(f.calls).toEqual([]); expect(f.stored()).toEqual(saved);
 });
 

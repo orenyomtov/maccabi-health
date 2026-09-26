@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ACCESS_TTL_MS, MAX_CLIENTS, OAuthStore, REFRESH_TTL_MS } from "./store";
@@ -136,10 +136,24 @@ describe("persistence", () => {
     const reopened = await OAuthStore.open(path, () => clock);
     expect(reopened.findClient(client.clientId)?.clientName).toBe("claude code");
     expect(reopened.lookupAccess(tokens.accessToken)?.subject).toBe(SUBJECT);
+  });
 
-    await reopened.clear();
-    const empty = await OAuthStore.open(path, () => clock);
-    expect(empty.findClient(client.clientId)).toBeNull();
-    expect(empty.lookupAccess(tokens.accessToken)).toBeNull();
+  test("a failed mirror write is reported on stderr and never fails the request", async () => {
+    const path = join(directory, "mirror", "oauth.json");
+    const store = await OAuthStore.open(path, () => clock);
+    // The mirror's own directory is a file, so every write through writeProtected fails from here on.
+    await writeFile(join(directory, "mirror"), "");
+    const lines: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(line => { lines.push(String(line)); return true; });
+    try {
+      const { client, code, codeVerifier } = await grant(store);
+      const redeemed = await store.redeemCode(code, { clientId: client.clientId, redirectUri: "http://127.0.0.1:41234/callback", codeVerifier, resource: RESOURCE });
+      expect(redeemed.subject).toBe(SUBJECT);
+      const tokens = await store.issueTokens({ clientId: client.clientId, subject: SUBJECT, resource: RESOURCE, scope: "maccabi" });
+      expect(store.lookupAccess(tokens.accessToken)?.subject).toBe(SUBJECT);
+    } finally { stderr.mockRestore(); }
+    expect(lines.some(line => line.includes(path))).toBe(true);
+    // Shutdown and tests still get the real failure through flush().
+    await expect(store.flush()).rejects.toThrow();
   });
 });

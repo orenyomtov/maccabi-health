@@ -41,6 +41,9 @@ export interface LocalHttpMcpOptions {
   login?: Pick<LoginDependencies, "createAuth" | "connect">;
 }
 
+/** Long enough for a read that is nearly done, short enough that Ctrl-C does not read as a hang. */
+const CLOSE_GRACE_MS = 2_000;
+
 function closeNodeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
@@ -194,7 +197,13 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
     port,
     url: boundResource,
     async close() {
-      await closeNodeServer(server);
+      // server.close() waits for every connection that is mid-request, and Node gives those 300
+      // seconds before its own requestTimeout fires. A Maccabi read takes seconds, so a member who
+      // stops the server during one would sit in front of a terminal that looks frozen.
+      server.closeIdleConnections();
+      const closed = closeNodeServer(server);
+      const forced = setTimeout(() => server.closeAllConnections(), CLOSE_GRACE_MS);
+      try { await closed; } finally { clearTimeout(forced); }
       await handler.close();
       await oauth.flush().catch(() => undefined);
       executors.clear();

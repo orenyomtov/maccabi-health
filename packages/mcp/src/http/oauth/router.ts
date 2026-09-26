@@ -9,7 +9,7 @@ import { errorPage, idPage, otpPage, PAGE_HEADERS, phonePage } from "./pages";
 import { isRegistrableRedirect, matchesRegistered } from "./redirect";
 import type { OAuthStore } from "./store";
 import {
-  AuthorizeSessions, MemoryPendingLoginStore, SubjectRoutedStore, clearedCookie, readCookie, sessionCookie,
+  AuthorizeSessions, MemoryPendingLoginStore, SubjectRoutedStore, clearedCookie, sessionCookie,
   type AuthorizeParams, type AuthorizeSession,
 } from "./login-session";
 
@@ -50,8 +50,15 @@ function statusFor(error: OAuthError): number {
   if (error.code === OAuthErrorCode.ServerError) return 500;
   return 400;
 }
-function sendOAuthError(response: ServerResponse, error: unknown): void {
+function reasonOf(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error);
+}
+function sendOAuthError(response: ServerResponse, path: string, error: unknown): void {
   const oauth = error instanceof OAuthError ? error : new OAuthError(OAuthErrorCode.ServerError, "The authorization server could not complete this request.");
+  // /token and /register catch their own errors, so this is the only place that sees every 500 this
+  // server sends. Without a line here the member's client reports an opaque failure and the terminal
+  // running the server says nothing at all.
+  if (oauth.code === OAuthErrorCode.ServerError) process.stderr.write(`Maccabi OAuth ${path} failed: ${reasonOf(error)}\n`);
   sendJson(response, statusFor(oauth), oauth.toResponseObject());
 }
 
@@ -142,19 +149,20 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
       return;
     }
     const session = deps.sessions.create(params);
-    if (!session) { redirectBack(response, params, { error: OAuthErrorCode.TemporarilyUnavailable, error_description: "Too many sign-ins are already open in a browser. Finish or close one and retry." }); return; }
-    sendHtml(response, 200, idPage(session.id, session.csrf, params.clientLabel), { "set-cookie": sessionCookie(session.id) });
+    if (!session) { redirectBack(response, params, { error: OAuthErrorCode.TemporarilyUnavailable, error_description: "This server is holding too many unfinished sign-ins. Try again in a few minutes." }); return; }
+    sendHtml(response, 200, idPage(session.id, session.csrf, params.clientLabel), { "set-cookie": sessionCookie(session) });
   }
 
   async function authorizePost(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const body = await readBody(request);
     if (body === null) { sendHtml(response, 413, errorPage("That form submission was too large to read.")); return; }
     const fields = new URLSearchParams(body);
-    // The cookie decides which session this is; the hidden field only has to agree with it. A form
-    // posted from elsewhere carries no cookie for /authorize, so it cannot name someone else's session.
-    const session = deps.sessions.get(readCookie(request.headers.cookie));
-    if (!session || fields.get("session") !== session.id || !deps.sessions.checkCsrf(session, fields.get("csrf") ?? undefined)) {
-      sendHtml(response, 400, errorPage("This sign-in form expired or did not come from this page. Start again from your MCP client."), { "set-cookie": clearedCookie() });
+    // The hidden field names the session and the cookie proves this browser was served it. A form
+    // posted from elsewhere carries no cookie for /authorize, so it cannot answer for a session it
+    // was never given. Nothing is cleared on the way out: the other tabs' cookies are still good.
+    const session = deps.sessions.get(fields.get("session") ?? undefined);
+    if (!session || !deps.sessions.checkCookie(session, request.headers.cookie) || !deps.sessions.checkCsrf(session, fields.get("csrf") ?? undefined)) {
+      sendHtml(response, 400, errorPage("This sign-in form expired or did not come from this page. Start again from your MCP client."));
       return;
     }
     const step = fields.get("step");
@@ -186,7 +194,7 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
         });
         await deps.store.touchClient(session.params.clientId);
         deps.sessions.delete(session.id);
-        response.setHeader("set-cookie", clearedCookie());
+        response.setHeader("set-cookie", clearedCookie(session.id));
         redirectBack(response, session.params, { code });
         return;
       }
@@ -200,9 +208,9 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
     }
   }
 
-  async function token(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function token(request: IncomingMessage, response: ServerResponse, path: string): Promise<void> {
     const body = await readBody(request);
-    if (body === null) { sendOAuthError(response, new OAuthError(OAuthErrorCode.InvalidRequest, "The request body was too large.")); return; }
+    if (body === null) { sendOAuthError(response, path, new OAuthError(OAuthErrorCode.InvalidRequest, "The request body was too large.")); return; }
     const fields = new URLSearchParams(body);
     const clientId = fields.get("client_id") ?? "";
     try {
@@ -226,7 +234,7 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
         access_token: issued.accessToken, token_type: "Bearer", expires_in: issued.expiresIn,
         refresh_token: issued.refreshToken, scope: issued.scope,
       });
-    } catch (error) { sendOAuthError(response, error); }
+    } catch (error) { sendOAuthError(response, path, error); }
   }
 
   const clientMetadataSchema = z.object({
@@ -239,9 +247,9 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
   });
   const SUPPORTED_GRANTS = ["authorization_code", "refresh_token"];
 
-  async function register(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function register(request: IncomingMessage, response: ServerResponse, path: string): Promise<void> {
     const body = await readBody(request);
-    if (body === null) { sendOAuthError(response, new OAuthError(OAuthErrorCode.InvalidClientMetadata, "The registration body was too large.")); return; }
+    if (body === null) { sendOAuthError(response, path, new OAuthError(OAuthErrorCode.InvalidClientMetadata, "The registration body was too large.")); return; }
     try {
       let parsed;
       try { parsed = clientMetadataSchema.parse(JSON.parse(body)); }
@@ -265,24 +273,24 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
         response_types: ["code"],
         scope: OAUTH_SCOPE,
       });
-    } catch (error) { sendOAuthError(response, error); }
+    } catch (error) { sendOAuthError(response, path, error); }
   }
 
-  async function revoke(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function revoke(request: IncomingMessage, response: ServerResponse, path: string): Promise<void> {
     const body = await readBody(request);
-    if (body === null) { sendOAuthError(response, new OAuthError(OAuthErrorCode.InvalidRequest, "The request body was too large.")); return; }
+    if (body === null) { sendOAuthError(response, path, new OAuthError(OAuthErrorCode.InvalidRequest, "The request body was too large.")); return; }
     const fields = new URLSearchParams(body);
     const presented = fields.get("token");
-    if (presented === null) { sendOAuthError(response, new OAuthError(OAuthErrorCode.InvalidRequest, "token is required.")); return; }
+    if (presented === null) { sendOAuthError(response, path, new OAuthError(OAuthErrorCode.InvalidRequest, "token is required.")); return; }
     // RFC 7009: an unknown token is still a success, so revocation never doubles as a token oracle.
     await deps.store.revokeToken(presented);
     sendJson(response, 200, {});
   }
 
-  const fail = (response: ServerResponse, error: unknown): void => {
-    process.stderr.write("Maccabi OAuth request failed.\n");
-    if (!response.headersSent) sendOAuthError(response, error);
-    else response.end();
+  const fail = (response: ServerResponse, path: string, error: unknown): void => {
+    if (!response.headersSent) { sendOAuthError(response, path, error); return; }
+    process.stderr.write(`Maccabi OAuth ${path} failed after the response had started: ${reasonOf(error)}\n`);
+    response.end();
   };
 
   return (request, response, url) => {
@@ -290,8 +298,8 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
     if (path !== AUTHORIZE_PATH && path !== TOKEN_PATH && path !== REGISTER_PATH && path !== REVOKE_PATH) return false;
     const method = request.method ?? "GET";
     if (path === AUTHORIZE_PATH) {
-      if (method === "GET") { try { authorizeGet(response, url); } catch (error) { fail(response, error); } return true; }
-      if (method === "POST") { void authorizePost(request, response).catch(error => fail(response, error)); return true; }
+      if (method === "GET") { try { authorizeGet(response, url); } catch (error) { fail(response, path, error); } return true; }
+      if (method === "POST") { void authorizePost(request, response).catch(error => fail(response, path, error)); return true; }
       response.writeHead(405, { allow: "GET, POST", "cache-control": "no-store" });
       response.end();
       return true;
@@ -302,7 +310,7 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
       return true;
     }
     const handler = path === TOKEN_PATH ? token : path === REGISTER_PATH ? register : revoke;
-    void handler(request, response).catch(error => fail(response, error));
+    void handler(request, response, path).catch(error => fail(response, path, error));
     return true;
   };
 }

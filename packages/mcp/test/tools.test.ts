@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { ISSUES_URL, MaccabiTransport, ReadOperationError, ReauthenticationRequired, UpstreamError, type MaccabiSession } from "@maccabi/core";
+import { ISSUES_URL, MaccabiDirectory, MaccabiTransport, ReadOperationError, ReauthenticationRequired, UpstreamError, type MaccabiSession } from "@maccabi/core";
 import { createMaccabiMcpServer, serialExecutor, COVERAGE, COVERAGE_URI, type MaccabiMcpOptions, type SessionLease, type ReaderOperations } from "../src/tools";
 import { decodeRef, encodeRef, RefTokenError } from "../src/reference";
 /** The token prefix, spelled out here so a change to it fails this file rather than passing silently. */
@@ -34,7 +34,6 @@ function structured(result: unknown): any { return (result as { structuredConten
 function withoutNext(value: any): any { const { next, ref, ...rest } = value ?? {}; return rest; }
 /** Row tokens are minted by this layer, so comparing rows against reader output drops them. */
 function withoutRefs(rows: any[]): any[] { return rows.map(({ ref, ...rest }: any) => rest); }
-function bare(value: any): any { const stripped = withoutNext(value); return Array.isArray(stripped.data) ? { ...stripped, data: withoutRefs(stripped.data) } : stripped; }
 const ref = encodeRef;
 function fakeReaders(overrides: Partial<ReaderOperations>): ReaderOperations { return overrides as ReaderOperations; }
 function result<T>(data: T) { return { data, retrievedAt: "2025-01-01T00:00:00Z", source: { service: "synthetic", operation: "synthetic", completeness: "upstream-response" as const } }; }
@@ -46,8 +45,10 @@ describe("official SDK in-memory MCP integration", () => {
     expect(tools.length).toBe(38);
     for (const tool of tools) {
       expect(tool.inputSchema.additionalProperties).toBe(false);
-      expect(tool.annotations?.destructiveHint).toBe(false);
-      expect(tool.annotations?.readOnlyHint).toBe(!["maccabi_clinic_availability", "maccabi_renew_session", "maccabi_login_start", "maccabi_login_verify", "maccabi_login_status", "maccabi_logout"].includes(tool.name));
+      // maccabi_logout deletes the saved session, and replacing it costs the member another SMS, so
+      // it is the one tool a client should prompt on. Everything else here only ever adds.
+      expect(tool.annotations?.destructiveHint).toBe(tool.name === "maccabi_logout");
+      expect(tool.annotations?.readOnlyHint).toBe(!["maccabi_clinic_availability", "maccabi_renew_session", "maccabi_login_start", "maccabi_login_verify", "maccabi_logout"].includes(tool.name));
       expect(JSON.stringify(tool.inputSchema)).not.toContain("member_id");
     }
     const coverage = await h.client.readResource({ uri: COVERAGE_URI });
@@ -59,13 +60,14 @@ describe("official SDK in-memory MCP integration", () => {
     const answer = structured(await h.client.callTool({ name: "maccabi_capabilities", arguments: {} }));
     expect(answer.howItWorks.join(" ")).toContain("maccabi_detail");
     expect(answer.flows.length).toBeGreaterThan(5);
-    // Every flow names real tools, so the one call an agent starts from cannot send it somewhere that does not exist.
+    // `tool` is the field a caller calls, so each one is a single registered name - not a CLI
+    // invocation, and not two names joined by a slash, which is a string no client can call either.
     const names = new Set((await h.client.listTools()).tools.map(tool => tool.name));
-    for (const flow of answer.flows) for (const step of flow.steps) for (const tool of step.tool.split(" / ")) {
-      if (tool.startsWith("maccabi_")) expect(names.has(tool)).toBe(true);
-    }
+    for (const flow of answer.flows) for (const step of flow.steps) expect(names.has(step.tool)).toBe(true);
     expect(answer.rowKinds).toContain("test");
-    expect(answer.coverage.records).toBe(COVERAGE.records);
+    // Whole, not filtered: coverage.session used to be deleted here because the clinical omit filter
+    // treats "session" as a credential field, which made docs/MCP.md's resource-equivalence line false.
+    expect(answer.coverage).toEqual(COVERAGE);
     expect(h.effects.loads).toBe(0);
   });
   test("a ref that was edited, invented or taken from the wrong tool fails before any session is resolved", async () => {
@@ -97,6 +99,87 @@ describe("official SDK in-memory MCP integration", () => {
     expect(certificate.error.instruction).toContain("maccabi_document");
     const study = structured(await h.client.callTool({ name: "maccabi_document", arguments: { ref: ref("imaging_study", { study_instance_uid: "1.2.3" }) } }));
     expect(study.error.instruction).toContain("maccabi_detail");
+  });
+
+  /**
+   * A schema is the whole of what a model has to plan against, so a selector that is accepted and then
+   * dropped is the one failure it cannot route around: the download succeeds and hands back the row's
+   * default document instead. Every unsupported pair is refused by name, from the ref alone.
+   */
+  test("a document selector the row cannot use is refused before any session, not dropped", async () => {
+    const sha = "a".repeat(64), range = { from: "2026-01-01", to: "2026-12-31" };
+    const rows = [
+      ["test", ref("test", { request_id: "r", doc_id: "d" }), ["variant", "irregular_only"]],
+      ["latest_labs", ref("latest_labs", {}), ["variant"]],
+      ["followed_labs", ref("followed_labs", {}), ["variant"]],
+      ["visit", ref("visit", { appointment_id: "a" }), ["variant", "reference"]],
+      ["inquiry", ref("inquiry", { request_id: "r" }), ["reference"]],
+      ["administrative_request", ref("administrative_request", { interaction_id: "i" }), ["reference"]],
+      ["mailing", ref("mailing", range), ["reference"]],
+      ["prescription", ref("prescription", { doc_id: "d" }), []],
+      ["referral", ref("referral", { referral_id: "r" }), []],
+      ["certificate", ref("certificate", { reference: sha, ...range }), []],
+      ["additional_information", ref("additional_information", { reference: sha, ...range }), []],
+      ["hospital_report", ref("hospital_report", { reference: sha, as_of: "2026-09-20" }), []],
+      ["billing_report", ref("billing_report", { reference: sha, period: "1001" }), []],
+      ["nursing_insurance_report", ref("nursing_insurance_report", { reference: sha }), []],
+    ] as const;
+    const values = { variant: "summary", reference: "c".repeat(64), irregular_only: true };
+    const h = await setup();
+    for (const [kind, token, accepted] of rows) {
+      for (const selector of ["variant", "reference", "irregular_only"] as const) {
+        if ((accepted as readonly string[]).includes(selector)) continue;
+        const error = structured(await h.client.callTool({ name: "maccabi_document", arguments: { ref: token, [selector]: values[selector] } })).error;
+        expect([kind, selector, error.code]).toEqual([kind, selector, "INVALID_SELECTION"]);
+        expect(error.instruction).toContain(selector);
+        expect(error.instruction).toContain(accepted.length === 0 ? "exactly one document" : "It takes");
+      }
+    }
+    // irregular_only is the source's print checkbox on a whole report, so it needs the report variant.
+    const stray = structured(await h.client.callTool({ name: "maccabi_document", arguments: { ref: ref("test", { request_id: "r", doc_id: "d" }), irregular_only: true } })).error;
+    expect(stray.instruction).toContain("variant=laboratory_report");
+    // A visit offers a summary or one attachment; asking for both names no single document.
+    const both = structured(await h.client.callTool({ name: "maccabi_document", arguments: { ref: ref("visit", { appointment_id: "a" }), variant: "summary", reference: sha } })).error;
+    expect(both.instruction).toContain("not both");
+    expect(h.effects.loads).toBe(0);
+  });
+
+  test("a mailing reference cannot redirect the download to another row's document", async () => {
+    const saved = await session();
+    const range = { from: "2026-01-01", to: "2026-12-31" };
+    const own = "a".repeat(64), foreign = "b".repeat(64);
+    const asked: string[] = [];
+    const h = await setup({ connect: async () => ({ readers: fakeReaders({ getNotificationPdf: async (reference, dates) => { expect(dates).toEqual(range); asked.push(reference); return result(new TextEncoder().encode("%PDF-1.4 synthetic")); } }), exportSession: async () => saved }) });
+    // A type-1 or type-2 row carries its own reference, so a reference copied from another row is
+    // refused rather than winning over it and downloading that other row's document.
+    const refused = structured(await h.client.callTool({ name: "maccabi_document", arguments: { ref: ref("mailing", { ...range, reference: own }), reference: foreign } })).error;
+    expect(refused.code).toBe("INVALID_SELECTION");
+    expect(refused.instruction).toContain("carries its own document reference");
+    await h.client.callTool({ name: "maccabi_document", arguments: { ref: ref("mailing", { ...range, reference: own }) } });
+    // A type-3 row carries none, and there `reference` is how one of its tutorials is named.
+    await h.client.callTool({ name: "maccabi_document", arguments: { ref: ref("mailing", range), reference: foreign } });
+    expect(asked).toEqual([own, foreign]);
+  });
+
+  test("offset and limit are refused on a detail that is one record, and default on the two that are rows", async () => {
+    const h = await setup();
+    for (const token of [ref("test", { request_id: "r", doc_id: "d" }), ref("visit", { appointment_id: "a" }), ref("inquiry", { request_id: "r" }),
+      ref("administrative_request", { interaction_id: "i" }), ref("appointment", { reference: "a".repeat(64) }),
+      ref("provider", { object_type: "1", object_id: "2", employee_id: "3" }), ref("imaging_study", { study_instance_uid: "1.2.3" }),
+      ref("directory_provider", { category: "doctors", field: "a", reference: "provider-" + "a".repeat(32) })]) {
+      for (const bounds of [{ offset: 0 }, { limit: 5 }]) {
+        const error = structured(await h.client.callTool({ name: "maccabi_detail", arguments: { ref: token, ...bounds } })).error;
+        expect(error.code).toBe("INVALID_SELECTION");
+        expect(error.instruction).toContain("returned whole");
+      }
+    }
+    expect(h.effects.loads).toBe(0);
+    // The pair no longer carries a schema default, so the two kinds that page apply it themselves.
+    const saved = await session();
+    const doses = Array.from({ length: 25 }, (_, index) => ({ dose_number: index }));
+    const paged = await setup({ connect: async () => ({ readers: fakeReaders({ getVaccinationDoses: async () => result(doses) }), exportSession: async () => saved }) });
+    const answer = structured(await paged.client.callTool({ name: "maccabi_detail", arguments: { ref: ref("vaccination_group", { vaccine_group_code: 1 }) } }));
+    expect(answer.page).toMatchObject({ offset: 0, returned: 20, nextOffset: 20 });
   });
   test("real core via injected fetch returns owner profile without identity/credentials and saves refreshed session", async () => {
     let network = 0; let saves = 0;
@@ -989,14 +1072,26 @@ describe("anonymous public directory MCP", () => {
   });
 });
 
-test("anonymous directory configuration failure remains actionable and does not touch owner leases", async () => {
-  const fail = async (): Promise<never> => { throw new UpstreamError("DIRECTORY_CONFIGURATION_UNAVAILABLE"); };
-  const h = await setup({ createDirectory: () => ({ listProviderFields: fail, listProviderCities: fail, searchProviders: fail, getProviderDetails: fail }) });
+/**
+ * A model reading a public-directory failure has one dangerous move available to it: reporting the
+ * empty result as fact. So the challenge carries its own code and says in the same breath that
+ * nothing was searched, and the generic branch says it is not the challenge and not empty either.
+ */
+test("a bot challenge cannot be read as an empty directory result, and does not touch owner leases", async () => {
+  const challenge = new MaccabiDirectory({ fetch: async () => new Response("<html>Are you a robot?</html>", { headers: { "Content-Type": "text/html" } }) });
+  const h = await setup({ createDirectory: () => challenge });
   const response = await h.client.callTool({ name: "maccabi_directory_search", arguments: { category: "doctors", field: "synthetic-key" } });
   expect(response.isError).toBe(true); const error = structured(response).error;
-  expect(error.code).toBe("DIRECTORY_CONFIGURATION_UNAVAILABLE");
-  expect(error.instruction).toContain("bot-challenge page"); expect(error.instruction).toContain("official directory in a browser"); expect(error.instruction).toContain("no search was submitted");
-  expect(h.effects.loads).toBe(0); expect(h.effects.saves).toBe(0); expect(h.effects.invalidates).toBe(0);
+  expect(error.code).toBe("DIRECTORY_BOT_CHALLENGE");
+  for (const phrase of ["bot-challenge page", "No search reached the directory", "not an empty result", "may succeed on a retry"]) {
+    expect(error.instruction).toContain(phrase);
+  }
+  const fail = async (): Promise<never> => { throw new UpstreamError("DIRECTORY_UNKNOWN_FIELD"); };
+  const other = await setup({ createDirectory: () => ({ listProviderFields: fail, listProviderCities: fail, searchProviders: fail, getProviderDetails: fail }) });
+  const rejected = structured(await other.client.callTool({ name: "maccabi_directory_search", arguments: { category: "doctors", field: "synthetic-key" } })).error;
+  expect(rejected.code).toBe("DIRECTORY_UNKNOWN_FIELD");
+  expect(rejected.instruction).toContain("not an empty result");
+  for (const owner of [h, other]) { expect(owner.effects.loads).toBe(0); expect(owner.effects.saves).toBe(0); expect(owner.effects.invalidates).toBe(0); }
 });
 
 describe("sign-in tools", () => {
@@ -1135,6 +1230,15 @@ describe("sign-in tools", () => {
     expect(JSON.stringify(response)).not.toContain("synthetic/attachment/path");
     // has_document is what decides whether a document step is offered at all.
     expect(response.next).toEqual(expect.arrayContaining([{ tool: "maccabi_document", arguments: { ref: response.data[0].ref }, why: expect.any(String) }]));
+    // A laboratory report exists only for a laboratory row, so a list without one offers none.
+    expect(JSON.stringify(response.next)).not.toContain("laboratory_report");
+    // The two kinds the source attaches no document to are laboratory results and imaging studies, so
+    // the step has to skip the study and land on the laboratory row rather than on whatever came first.
+    const study = { request_id: "synthetic-study", doc_id: "synthetic-study-document", type: "imaging_study", has_document: false, test_name: ["הדמיה"] };
+    const laboratory = { request_id: "synthetic-lab", doc_id: "synthetic-lab-document", type: "lab_result", has_document: false, test_name: ["ספירת דם"] };
+    const mixed = await setup({ connect: async () => ({ readers: fakeReaders({ listTests: async () => result({ categories: [], tests: [row, study, laboratory] as any }) }), exportSession: async () => saved }) });
+    const rows = structured(await mixed.client.callTool({ name: "maccabi_tests", arguments: {} }));
+    expect(rows.next).toEqual(expect.arrayContaining([{ tool: "maccabi_document", arguments: { ref: rows.data[2].ref, variant: "laboratory_report" }, why: expect.any(String) }]));
   });
 });
 

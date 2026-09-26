@@ -171,10 +171,24 @@ describe("bounded appointment discovery", () => {
     await expect((await MaccabiReaders.create(denied)).getClinicAvailability(reference)).rejects.toMatchObject({ code: "NOT_ELIGIBLE" });
     expect(denied.calls.length).toBe(3);
   });
-  test("refuses changed static authentication source before starting a dialogue", async () => {
-    const transport = new MockTransport([account(), [recent], { is_eligible: true, future_appointments: [] }, { providers: { provider: [provider] } }, new Response("<html>login</html>")]);
-    await expect((await MaccabiReaders.create(transport)).getClinicAvailability(reference)).rejects.toMatchObject({ code: "UNSUPPORTED_FLOW" });
-    expect(transport.calls.some((call) => call.path.includes("/odoro/"))).toBe(false);
+  // The pinned bundle name carries a content hash, so a frontend deploy retires it. Every shape that
+  // retirement can take has to say the asset moved, because none of them is a retryable portal failure
+  // or a bad argument - the two things the codes this used to raise told the caller to act on.
+  test("refuses a retired static authentication source as SOURCE_MOVED before starting a dialogue", async () => {
+    const js = (body: string) => new Response(body, { headers: { "content-type": "application/javascript" } });
+    const cases: [Response, string][] = [
+      [new Response("", { status: 404 }), "SOURCE_MOVED"],
+      [new Response("", { status: 503 }), "UPSTREAM_HTTP"],
+      [new Response("<html>login</html>"), "SOURCE_MOVED"],
+      [js('var api="/sonline/AppointmentOrderAPI/webapi/mac/",key="' + "a".repeat(32) + '";'), "SOURCE_MOVED"],
+      [js('const paths=["/odoro/session","/odoro/dialog"];'), "SOURCE_MOVED"],
+    ];
+    for (const [response, code] of cases) {
+      const transport = new MockTransport([account(), [recent], { is_eligible: true, future_appointments: [] }, { providers: { provider: [provider] } }, response]);
+      await expect((await MaccabiReaders.create(transport)).getClinicAvailability(reference)).rejects.toMatchObject({ code, operation: "appointment-source" });
+      expect(transport.calls.some((call) => call.path.includes("/odoro/"))).toBe(false);
+    }
+    expect(READ_ERROR_GUIDANCE.SOURCE_MOVED("appointment-source")).toContain("Retrying cannot fix it");
   });
 });
 
@@ -440,12 +454,22 @@ describe("medical certificates", () => {
     expect(new URL(transport.calls[3]!.path, "https://synthetic.invalid").searchParams.get("path")).toBe("fixture/document");
     expect(transport.calls[3]?.init?.apiAuthorization).toBe(false);
   });
+  test("a reference held from another range is re-listed under the range the caller asked for", async () => {
+    const other = { from: "2020-01-01", to: "2020-12-31" };
+    const transport = new MockTransport([bootstrap(), { approval: [certificate()] }, { approval: [] }]);
+    const reader = await MaccabiReaders.create(transport);
+    const reference = (await reader.listCertificates(other)).data[0]!.reference;
+    await expect(reader.getCertificatePdf(reference, range)).rejects.toMatchObject({ code: "OWNER_MISMATCH" });
+    expect(transport.calls[2]?.path).toContain("from_date=2024-01-01&to_date=2026-12-31");
+  });
   test("invalid dates, unknown reference and duplicate ambiguous document references fail safely", async () => {
     const transport = new MockTransport([bootstrap(), { approval: [] }]);
     const reader = await MaccabiReaders.create(transport);
     await expect(reader.listCertificates({ from: "2025-02-30", to: "2025-03-01" })).rejects.toBeInstanceOf(TypeError);
     expect(transport.calls).toHaveLength(1);
     await expect(reader.getCertificatePdf("unknown", range)).rejects.toMatchObject({ code: "OWNER_MISMATCH" });
+    expect(transport.calls).toHaveLength(1);
+    await expect(reader.getCertificatePdf("a".repeat(64), range)).rejects.toMatchObject({ code: "OWNER_MISMATCH" });
     expect(transport.calls).toHaveLength(2);
     const duplicate = await MaccabiReaders.create(new MockTransport([bootstrap(), { approval: [certificate(), certificate()] }]));
     await expect(duplicate.listCertificates(range)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
@@ -518,6 +542,39 @@ describe("owner-bound imaging documents", () => {
       ["lab", false], ["imaging", true], ["external", true], ["study", false], ["future", true], ["blank", false],
     ]);
   });
+});
+
+/**
+ * These three used to check only response.ok, the content type and the %PDF- magic, each in its own
+ * copy. They go through downloadSourcePdf like the rest now, so a logout page, an answer from a URL
+ * other than the one asked for, and a capitalised content type mean the same thing everywhere.
+ */
+describe("document reads hold one response contract", () => {
+  const referral = { referral_id: "fixture-referral", referral_date: "source-date", displaying_name: "מסמך לדוגמה", pdf_link: "fixture", hash: "fixture", timestamp: "fixture" };
+  const imaging = testRow("imaging_result", { request_id: "imaging-request", doc_id: "imaging-document" });
+  const document = (url: string | null, type = "application/pdf") => {
+    const value = new Response("%PDF-1.7\nsynthetic", { headers: { "content-type": type } });
+    if (url) Object.defineProperty(value, "url", { value: url });
+    return value;
+  };
+  const cases = [
+    ["english medical summary", [{ timestamp: "synthetic", hash: "synthetic" }], (reader: MaccabiReaders) => reader.getEnglishMedicalSummaryPdf()],
+    ["referral", [{ referrals: [referral] }], (reader: MaccabiReaders) => reader.getReferralPdf(referral.referral_id)],
+    ["imaging result", [{ categories: [], tests: [imaging] }], (reader: MaccabiReaders) => reader.getImagingResultPdf("imaging-request", "imaging-document")],
+  ] as const;
+  for (const [name, before, read] of cases) {
+    test(`the ${name} PDF is bound to the URL it asked for and to a live session`, async () => {
+      for (const [url, code] of [
+        ["https://online.maccabi4u.co.il/my.logout.php3", "REAUTHENTICATION_REQUIRED"],
+        ["https://online.maccabi4u.co.il/sonline/somewhere/else", "INVALID_RESPONSE"],
+      ] as const) {
+        const reader = await MaccabiReaders.create(new MockTransport([bootstrap(), ...before, document(url)]));
+        await expect(read(reader)).rejects.toMatchObject({ code });
+      }
+      const reader = await MaccabiReaders.create(new MockTransport([bootstrap(), ...before, document(null, "Application/PDF")]));
+      expect(new TextDecoder().decode((await read(reader)).data)).toBe("%PDF-1.7\nsynthetic");
+    });
+  }
 });
 
 test("additional-information descriptions use source-derived fields without exposing arbitrary URLs", async () => {
@@ -816,7 +873,7 @@ describe("source-complete original document reads", () => {
     await expect(missing.getLabResultFilePdf({source:"result",requestId:"request",docId:"doc",testId:"test"})).rejects.toMatchObject({ code: "UNSUPPORTED_FLOW" });
   });
   test("the issue link rides only on the read failures that mean a defect in this client", () => {
-    const ours: ReadErrorCode[] = ["INVALID_RESPONSE", "UNSUPPORTED_FLOW", "NOT_ELIGIBLE"];
+    const ours: ReadErrorCode[] = ["INVALID_RESPONSE", "UNSUPPORTED_FLOW", "NOT_ELIGIBLE", "SOURCE_MOVED"];
     // A stale reference, a selected dependent, a missing token or a failing portal are not this
     // project's bugs. Asking for an issue there would teach a caller to skip the line everywhere.
     const notOurs: ReadErrorCode[] = ["UPSTREAM_HTTP", "UPSTREAM_RESULT_ERROR", "TOKEN_UNAVAILABLE", "OWNER_MISMATCH", "DEPENDENT_SELECTED"];

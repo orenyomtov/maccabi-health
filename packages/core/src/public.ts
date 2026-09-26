@@ -17,7 +17,7 @@ export type { LoginChallenge, LoginPhoneChoice, PendingLogin } from "./auth";
 
 export { MaccabiError, AuthenticationError, ReauthenticationRequired, UpstreamError, ISSUES_URL } from "./errors";
 
-export { safeClinical, OMITTED_KEYS } from "./privacy";
+export { safeClinical } from "./privacy";
 
 export type { MaccabiSession } from "./session";
 

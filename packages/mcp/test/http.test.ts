@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { ReauthenticationRequired, UpstreamError, type MaccabiSession, type PendingLogin } from "@maccabi/core";
 import type { LoginAuthDriver, LoginDependencies } from "@maccabi/cli/login";
@@ -309,6 +310,25 @@ describe("browser authorization", () => {
     }
     expect((await registerClient(handle, { redirect_uris: ["https://vscode.dev/redirect"] })).status).toBe(201);
   });
+
+  test("a ninth sign-in page evicts the oldest untouched one instead of refusing", async () => {
+    const { handle } = await start();
+    const { body: client } = await registerClient(handle, { redirect_uris: [LOOPBACK_REDIRECT] });
+    const open = async () => {
+      const page = await fetch(authorizeUrl(handle, authorizeQuery(handle, client["client_id"]!, pkce().challenge)), { redirect: "manual" });
+      const html = await page.text();
+      return { status: page.status, cookie: cookieOf(page), form: { session: hidden(html, "session"), csrf: hidden(html, "csrf") } };
+    };
+    const first = await open();
+    for (let n = 1; n < 8; n++) expect((await open()).status).toBe(200);
+
+    // Nothing is in flight upstream for a page nobody typed into, so the oldest of those gives way
+    // rather than locking the member out for the ten minutes the TTL would otherwise take.
+    const ninth = await open();
+    expect(ninth.status).toBe(200);
+    expect((await postForm(handle, first.cookie, { ...first.form, step: "id", id: MEMBER })).status).toBe(400);
+    expect(await (await postForm(handle, ninth.cookie, { ...ninth.form, step: "id", id: MEMBER })).text()).toContain("Where should the code go?");
+  });
 });
 
 describe("open redirector defence", () => {
@@ -489,6 +509,30 @@ describe("per-member isolation", () => {
     expect(await readdir(join(configDir, "sessions"))).toHaveLength(2);
   });
 
+  test("two sign-in tabs in one browser jar keep their own cookies", async () => {
+    // A browser sends every cookie it holds for /authorize on every post. With one fixed cookie name
+    // the second tab's Set-Cookie replaced the first tab's, and the first tab's post then answered
+    // for the second tab's session and killed both.
+    const { handle, configDir } = await start();
+    const { body: client } = await registerClient(handle, { redirect_uris: [LOOPBACK_REDIRECT], client_name: "Test client" });
+    const clientId = client["client_id"]!;
+    const open = async () => {
+      const page = await fetch(authorizeUrl(handle, authorizeQuery(handle, clientId, pkce().challenge)));
+      const html = await page.text();
+      return { cookie: cookieOf(page), form: { session: hidden(html, "session"), csrf: hidden(html, "csrf") } };
+    };
+    const a = await open(), b = await open();
+    const jar = `${a.cookie}; ${b.cookie}`;
+
+    expect(await (await postForm(handle, jar, { ...a.form, step: "id", id: MEMBER })).text()).toContain("Where should the code go?");
+    expect(await (await postForm(handle, jar, { ...b.form, step: "id", id: OTHER_MEMBER })).text()).toContain("Where should the code go?");
+    await postForm(handle, jar, { ...a.form, step: "phone", phone: "1" });
+    await postForm(handle, jar, { ...b.form, step: "phone", phone: "4" });
+    expect((await postForm(handle, jar, { ...a.form, step: "otp", code: OTP })).status).toBe(303);
+    expect((await postForm(handle, jar, { ...b.form, step: "otp", code: OTP })).status).toBe(303);
+    expect(await readdir(join(configDir, "sessions"))).toHaveLength(2);
+  });
+
   test("calls serialize per member and not across members", async () => {
     let active = 0, peak = 0, resolved = 0;
     const { handle } = await start({
@@ -628,5 +672,40 @@ describe("token lifecycle", () => {
     const query = authorizeQuery(handle, client["client_id"]!, pkce().challenge);
     const response = await fetch(authorizeUrl(handle, { ...query, resource: "https://someone-elses.example/mcp" }), { redirect: "manual" });
     expect(new URL(response.headers.get("location")!).searchParams.get("error")).toBe("invalid_target");
+  });
+});
+
+describe("shutdown and diagnostics", () => {
+  test("close does not wait for a request that never finishes arriving", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "maccabi-http-"));
+    cleanups.push(() => rm(configDir, { recursive: true, force: true }));
+    const handle = await startLocalHttpMcp({ port: 0, configDir, login: fakeUpstream().login });
+    const socket = connect(handle.port, handle.host);
+    await new Promise(resolve => socket.once("connect", resolve));
+    // A body that stops halfway: the request is in flight, so it is not an idle connection, and
+    // closing the server alone would hold until Node's 300-second requestTimeout while the member
+    // watches an apparently dead Ctrl-C.
+    socket.write("POST /token HTTP/1.1\r\nHost: 127.0.0.1\r\ncontent-type: application/x-www-form-urlencoded\r\ncontent-length: 100\r\n\r\ngrant_type=");
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await handle.close();
+    socket.destroy();
+  });
+
+  test("a request that fails unexpectedly names the endpoint on stderr", async () => {
+    const { handle } = await start();
+    const lines: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(line => { lines.push(String(line)); return true; });
+    try {
+      // The body is abandoned mid-flight, so readBody rejects outside the endpoint's own catch.
+      await new Promise<void>(resolve => {
+        const aborted = httpRequest(new URL("/token", handle.url), {
+          method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "content-length": "64" },
+        });
+        aborted.on("error", () => resolve());
+        aborted.write("grant_type=");
+        setTimeout(() => aborted.destroy(), 50);
+      });
+      await vi.waitFor(() => expect(lines.some(line => line.startsWith("Maccabi OAuth /token failed:"))).toBe(true));
+    } finally { stderr.mockRestore(); }
   });
 });

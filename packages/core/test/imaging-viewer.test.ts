@@ -346,23 +346,25 @@ describe("the pixel buffer", () => {
    * answer differently and the token mint come back unsuccessful, so every imaging read after the
    * first failed TOKEN_UNAVAILABLE. The chain drops those cookies before it starts.
    */
-  test("a viewer session left in the jar by an earlier run never rides along on the next handoff", async () => {
+  test("a viewer session left in the jar by an earlier run never rides along on the next handoff, whatever path it was stored under", async () => {
     const chain = new Chain();
     const transport = new MaccabiTransport({ fetch: chain.fetch });
+    const stale = { domain: "meddreamy.maccabi4u.co.il", secure: true, httpOnly: true, hostOnly: true, creation: "2026-09-23T00:00:00.000Z", lastAccessed: "2026-09-23T00:00:00.000Z" };
     transport.importCookies({
       version: "tough-cookie@6.0.2", storeType: "MemoryCookieStore", rejectPublicSuffixes: true,
-      cookies: [{
-        key: "MEDDREAMSESSID", value: "stale-viewer-session", domain: "meddreamy.maccabi4u.co.il",
-        path: "/", secure: true, httpOnly: true, hostOnly: true,
-        creation: "2026-09-23T00:00:00.000Z", lastAccessed: "2026-09-23T00:00:00.000Z",
-      }],
+      cookies: [
+        { ...stale, key: "MEDDREAMSESSID", value: "stale-root-session", path: "/" },
+        // Path-scoped, so a purge that enumerates the viewer root would never see it and it would
+        // still be sent on the SAML leg, which is the leg the stale-session failure showed up on.
+        { ...stale, key: "LastMRH_Session", value: "stale-scoped-session", path: "/saml" },
+      ],
     });
     transport.markAuthenticated();
     const readers = await MaccabiReaders.create(transport);
     await readers.getImagingStudy(fixture.STUDY_UID);
     const viewerCalls = chain.seen.filter(entry => entry.href.startsWith(VIEWER_ORIGIN));
     expect(viewerCalls.length).toBeGreaterThan(0);
-    for (const call of viewerCalls) expect(call.headers.get("cookie") ?? "").not.toContain("stale-viewer-session");
+    for (const call of viewerCalls) expect(call.headers.get("cookie") ?? "").not.toMatch(/stale-(root|scoped)-session/);
   });
 });
 

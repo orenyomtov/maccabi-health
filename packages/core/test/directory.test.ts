@@ -83,13 +83,13 @@ describe("anonymous public doctor directory", () => {
     expect(out.calls).toHaveLength(2);
   });
 
-  test("paged response cannot silently change tabs, shrink below requested page, or return a challenge", async () => {
-    for (const next of [JSON.stringify({ ...result(), SelectedTab: "2" }), JSON.stringify({ ...result(), NumOfPages: 1 }), "<html>challenge</html>"]) {
+  test("paged response cannot silently change tabs or shrink below the requested page", async () => {
+    for (const next of [JSON.stringify({ ...result(), SelectedTab: "2" }), JSON.stringify({ ...result(), NumOfPages: 1 })]) {
       let posts = 0;
       const client = new MaccabiDirectory({ fetch: async url => {
         if (String(url) === entry) return response(page());
         posts++;
-        return response(posts === 1 ? JSON.stringify(result()) : next, next.startsWith("<") && posts > 1 ? "text/html" : "application/json");
+        return response(posts === 1 ? JSON.stringify(result()) : next, "application/json");
       } });
       await expect(client.searchProviders("doctors", "101", { page: 2 })).rejects.toMatchObject({ code: "DIRECTORY_INVALID_RESPONSE" });
       expect(posts).toBe(2);
@@ -117,17 +117,39 @@ describe("anonymous public doctor directory", () => {
     expect((await tricky.client.listProviderFields("doctors")).data[0].label).toBe('Synthetic }; { " bracket label');
   });
 
-  test("missing public configuration is distinct and stops before a search POST", async () => {
-    const { client, calls } = harness("<html><body>Public directory</body><script>window.unrelated = {};</script></html>");
-    await expect(client.searchProviders("doctors", "101")).rejects.toMatchObject({
-      code: "DIRECTORY_CONFIGURATION_UNAVAILABLE",
-      message: "The public site did not supply the expected search configuration. Check the official doctor directory in your browser; no search was submitted.",
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].init?.method).toBe("GET");
-    expect(calls[0].init?.credentials).toBe("omit");
-    expect(new Headers(calls[0].init?.headers).has("cookie")).toBe(false);
-    expect(new Headers(calls[0].init?.headers).has("authorization")).toBe(false);
+  /**
+   * The challenge is the ordinary failure on this host, and the three request shapes meet it
+   * differently: the doctors entry page parses as HTML with no search configuration in it, a JSON
+   * endpoint is handed HTML outright, and a second-page POST is handed HTML after the first one
+   * worked. All three have to reach the caller as one error, because the single reading a caller must
+   * never take from a challenge is that nobody matched.
+   */
+  test("a bot challenge is one error on every path and never reads as an empty result", async () => {
+    const entryPage = harness("<html><body>Public directory</body><script>window.unrelated = {};</script></html>");
+    const labsJson = new MaccabiDirectory({ fetch: async () => response("<html>Are you a robot?</html>") });
+    let posts = 0;
+    const secondPage = new MaccabiDirectory({ fetch: async url => {
+      if (String(url) === entry) return response(page());
+      posts++;
+      return posts === 1 ? response(JSON.stringify(result()), "application/json") : response("<html>Are you a robot?</html>");
+    } });
+    for (const read of [
+      () => entryPage.client.searchProviders("doctors", "101"),
+      () => labsJson.listProviderFields("labs-and-therapists"),
+      () => secondPage.searchProviders("doctors", "101", { page: 2 }),
+    ]) {
+      const error: Error = await read().then(() => { throw new Error("unexpected success"); }, (value: Error) => value);
+      expect(error).toMatchObject({ code: "DIRECTORY_BOT_CHALLENGE" });
+      for (const phrase of ["bot-challenge page", "No search reached the directory", "not an empty result", "may succeed on a retry"]) {
+        expect(error.message).toContain(phrase);
+      }
+    }
+    // The doctors path still stops at the entry page: a challenge never turns into a search POST.
+    expect(entryPage.calls).toHaveLength(1);
+    expect(entryPage.calls[0].init?.method).toBe("GET");
+    expect(entryPage.calls[0].init?.credentials).toBe("omit");
+    expect(new Headers(entryPage.calls[0].init?.headers).has("cookie")).toBe(false);
+    expect(new Headers(entryPage.calls[0].init?.headers).has("authorization")).toBe(false);
   });
 
   test("empty success is explicit; bad results never become empty success or raw error output", async () => {
@@ -152,6 +174,24 @@ describe("anonymous public doctor directory", () => {
       const client = new MaccabiDirectory({ fetch: async () => { calls++; return value; } });
       await expect(client.listProviderFields("doctors")).rejects.toHaveProperty("code");
       expect(calls).toBe(1);
+    }
+  });
+
+  /**
+   * The same rule the transport's own discard policy holds to: Node's fetch keeps the socket
+   * assigned to an unconsumed body. It matters most here, because this host answers a programmatic
+   * client with a bot challenge often enough that the failing branch is the ordinary one.
+   */
+  test("a failed directory read releases its body instead of pinning the connection", async () => {
+    for (const init of [{ status: 500, headers: { "Content-Type": "text/html" } }, { status: 200, headers: { "Content-Type": "application/json" } }]) {
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        start: controller => { controller.enqueue(new TextEncoder().encode("<html>challenge</html>")); },
+        cancel: () => { cancelled = true; },
+      });
+      const client = new MaccabiDirectory({ fetch: async () => new Response(body, init) });
+      await expect(client.listProviderFields("doctors")).rejects.toHaveProperty("code");
+      expect(cancelled).toBe(true);
     }
   });
 
@@ -270,7 +310,7 @@ describe("public provider categories and independently bound details", () => {
       await expect(client.getProviderDetails("doctors", "101", found.data.providers[0].reference)).rejects.toHaveProperty("code");
     }
     const challenged = detailHarness({ challenge: true });
-    await expect(challenged.client.getProviderDetails("doctors", "101", found.data.providers[0].reference)).rejects.toMatchObject({ code: "DIRECTORY_INVALID_RESPONSE" });
+    await expect(challenged.client.getProviderDetails("doctors", "101", found.data.providers[0].reference)).rejects.toMatchObject({ code: "DIRECTORY_BOT_CHALLENGE" });
     expect(challenged.calls).toHaveLength(3);
   });
 });

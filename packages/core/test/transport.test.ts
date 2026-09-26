@@ -11,7 +11,6 @@ async function withStalledPeer(run: (transport: MaccabiTransport, calls: string[
     calls.push(request.url!);
     if (request.url === "/headers") return; // Never send response headers.
     response.writeHead(200, { "content-type": "application/json" });
-    if (request.url === "/malformed") { response.end("{"); return; }
     response.write("{"); // Headers and initial bytes arrive, but the body never ends.
   });
   await new Promise<void>(resolve => peer.listen(0, "127.0.0.1", resolve));
@@ -37,9 +36,10 @@ describe("explicit network deadlines", () => {
     });
   });
 
-  test("a stalled JSON body is a timeout, not malformed content", async () => {
+  test("a stalled capped read is a timeout, not malformed content", async () => {
     await withStalledPeer(async (transport, calls) => {
-      await expect(transport.requestJson("/body")).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" });
+      const response = await transport.request("/body");
+      await expect(readCappedBody(response, 1024, new UpstreamError("INVALID_RESPONSE"))).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" });
       expect(calls).toEqual(["/body"]);
     });
   });
@@ -60,12 +60,6 @@ describe("explicit network deadlines", () => {
       const response = await transport.request("/body", { signal: controller.signal });
       controller.abort();
       await expect(readResponseBody(() => response.text(), new UpstreamError("INVALID_RESPONSE"))).rejects.toMatchObject({ code: "REQUEST_ABORTED" });
-    });
-  });
-
-  test("completed invalid JSON retains its original content error", async () => {
-    await withStalledPeer(async (transport) => {
-      await expect(transport.requestJson("/malformed")).rejects.toMatchObject({ code: "INVALID_JSON" });
     });
   });
 });
@@ -269,7 +263,7 @@ describe("the imaging handoff exemption", () => {
       seen.push(String(input));
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     } });
-    await transport.requestJson(VIEWER_ORIGIN + "/studies/1.2.3/structure?storageId=synthetic");
+    await transport.request(VIEWER_ORIGIN + "/studies/1.2.3/structure?storageId=synthetic");
     expect(seen).toEqual([VIEWER_ORIGIN + "/studies/1.2.3/structure?storageId=synthetic"]);
     for (const origin of ["https://meddreamy.maccabi4u.co.il.evil.example", "https://softneta.example", "https://maccabi4u.co.il"]) {
       await expect(transport.request(origin + "/studies/1.2.3/structure")).rejects.toMatchObject({ code: "UNSUPPORTED_ORIGIN" });
@@ -298,13 +292,11 @@ describe("the transport enforces the deadline it advertises", () => {
 describe("no failure path abandons a response body", () => {
   // Node's fetch keeps the socket assigned to an unconsumed body, so a throw that walks past one
   // pins a connection in the pool until the process exits. Measured before this was fixed: forty
-  // failing requestJson calls against a local peer left forty live TCP connections and reused none
+  // failing JSON reads against a local peer left forty live TCP connections and reused none
   // of them, and two hundred of them saturated the default 128-connection pool for good. The CLI
   // exits after one command, but the MCP server is long-lived and a portal outage produces exactly
   // these paths, so every one of them has to release the body it is throwing away.
   const cases: [string, ResponseInit, (transport: MaccabiTransport) => Promise<unknown>, boolean][] = [
-    ["a non-ok JSON read", { status: 500, headers: { "content-type": "application/json" } }, transport => transport.requestJson(PORTAL_ORIGIN + "/sonline/x"), false],
-    ["a JSON read answered with HTML", { status: 200, headers: { "content-type": "text/html" } }, transport => transport.requestJson(PORTAL_ORIGIN + "/sonline/x"), false],
     ["the 401/403 gate on an authenticated request", { status: 403 }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x"), true],
     ["an expiry redirect to the login host", { status: 302, headers: { location: LOGIN_ORIGIN + "/my.policy" } }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x"), true],
     ["a redirect off the allowlist", { status: 302, headers: { location: "https://evil.example/" } }, transport => transport.request(PORTAL_ORIGIN + "/sonline/x"), false],

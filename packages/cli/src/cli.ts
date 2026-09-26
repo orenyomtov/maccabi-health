@@ -1,5 +1,6 @@
+import { spawn, execFile } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   MaccabiAuth, MaccabiReaders, MaccabiTransport, MaccabiError, MaccabiDirectory, isDoctorSpecialtyField,
@@ -7,12 +8,11 @@ import {
   type MaccabiSession, type OwnerIdentity, type ProviderReference, type DateRange,
   type PrescriptionListOptions, type LabTestSelection, type DirectoryCategory,
 } from "@maccabi/core";
-import { configDirectory, CredentialStore, FilePendingLoginStore, FileSessionStore, PendingLoginStore, removeProtected, SavedLogin, SessionStoreError } from "./store";
+import { configDirectory, CredentialStore, FilePendingLoginStore, FileSessionStore, PendingLoginStore, removeProtected, SessionStoreError } from "./store";
 import { LoginAuthDriver, LoginDependencies, LoginError, loginStatus, logoutLocal, startLogin, verifyLogin } from "./login";
-import { terminalPrompt } from "./prompt";
+import { PromptCancelled, PromptUnavailable, terminalPrompt } from "./prompt";
 
 import { COMMANDS, MCP_COMMAND, VERSION, commandOptions, discovery, help, index, indexDiscovery } from "./commands";
-export { HELP } from "./commands";
 const DIRECTORY_COMMANDS = ["directory-fields", "directory-cities", "directory-search", "directory-detail"];
 const IMAGING_IMAGE_COMMANDS = ["imaging-image", "imaging-thumbnail", "imaging-pixels"];
 const IMAGING_STUDY_COMMANDS = ["imaging-study", ...IMAGING_IMAGE_COMMANDS];
@@ -45,6 +45,10 @@ export interface CliDependencies {
   createAuth(): LoginAuthDriver;
   stdout(text: string): void;
   stderr(text: string): void;
+  /** Detached hour-long renewal after a successful login. Tests replace this. */
+  startKeepAlive(): Promise<void>;
+  /** Stop that process. Logout calls it so a renewal cannot rewrite a deleted session. */
+  stopKeepAlive(): Promise<void>;
   /** Writes bytes to a new private file. Named for its first caller; imaging bytes use it too. */
   savePdf(path: string, bytes: Uint8Array): Promise<void>;
 }
@@ -60,12 +64,13 @@ function defaults(): CliDependencies {
     },
     createAuth: () => new MaccabiAuth(),
     stdout: text => process.stdout.write(text), stderr: text => process.stderr.write(text),
+    startKeepAlive() { return startLoginKeepAlive(this); },
+    stopKeepAlive() { return stopLoginKeepAlive(this); },
     async savePdf(path, bytes) { await writeFile(path, bytes, { mode: 0o600, flag: "wx" }); },
   };
 }
-class UsageError extends Error {
-  constructor(message = "Invalid command or options. Run maccabi --help. Credentials are never accepted as arguments.") { super(message); }
-}
+class UsageError extends Error {}
+const INTERACTIVE_LOGIN_HELP = "Login needs an interactive terminal, or the two flag steps. Run `maccabi login` without --no-input in a real terminal, or `maccabi login --id <id>` and then `maccabi login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No SMS was sent.";
 interface Args { command: string; flags: Map<string, string | true>; helpFor?: string; topLevel?: true }
 /**
  * Typing the bare binary is the cheapest thing an agent can do, so it has to stay cheap to read.
@@ -80,7 +85,7 @@ function parse(argv: string[]): Args {
   let command = argv[0] ?? "help";
   if (["--help", "-h"].includes(command)) command = "help";
   if (command === "--version") command = "version";
-  if (!Object.hasOwn(COMMANDS, command)) throw new UsageError();
+  if (!Object.hasOwn(COMMANDS, command)) throw new UsageError("Unknown command. Run maccabi to list every command, or maccabi help COMMAND. Credentials are never accepted as arguments.");
   const parsed = new Map<string, string | true>();
   let helpFor: string | undefined;
   if (command !== "help" && argv.slice(1).some(arg => arg === "--help" || arg === "-h")) {
@@ -89,13 +94,13 @@ function parse(argv: string[]): Args {
   for (let index = 1; index < argv.length; index++) {
     const arg = argv[index]!;
     if (command === "help" && !arg.startsWith("-") && !helpFor && (Object.hasOwn(COMMANDS, arg) || arg === MCP_COMMAND)) { helpFor = arg; continue; }
-    if (!arg.startsWith("--")) throw new UsageError();
+    if (!arg.startsWith("--")) throw new UsageError("Unexpected argument. This command takes options only.");
     const key = arg.slice(2);
-    if (!commandOptions(command).includes(key) || parsed.has(key)) throw new UsageError();
-    if (["json", "verify", "no-input", "irregular-only"].includes(key) || command === "login" && key === "status" || command === "logout" && key === "all") parsed.set(key, true);
+    if (!commandOptions(command).includes(key) || parsed.has(key)) throw new UsageError(`Unknown or repeated option. Run maccabi help ${command} for the options it takes. Credentials are never accepted as arguments.`);
+    if (["json", "verify", "no-input", "irregular-only"].includes(key) || command === "login" && ["status", "no-keep-alive"].includes(key) || command === "logout" && key === "all") parsed.set(key, true);
     else {
       const value = argv[++index];
-      if (!value || value.startsWith("--")) throw new UsageError();
+      if (!value || value.startsWith("--")) throw new UsageError(`That option needs a value. Run maccabi help ${command}.`);
       parsed.set(key, value);
     }
   }
@@ -230,6 +235,7 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
     }
     const login: LoginDependencies = { store: deps.store, pending: deps.pending, createAuth: deps.createAuth, connect: deps.connect };
     if (args.command === "logout") {
+      await deps.stopKeepAlive();
       const result = await logoutLocal(login);
       // The browser sign-in writes elsewhere in the same directory: one credential file per member
       // under sessions/, plus the registered clients and live tokens in oauth.json. Removing only
@@ -253,7 +259,7 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
       if (givenId !== undefined && givenCode !== undefined) throw new UsageError("Start a login with --id, then finish it with --code, as two separate commands.");
       if (givenCode !== undefined) {
         if (!/^\d{6}$/.test(givenCode)) throw new UsageError("Use --code with the six digits from the SMS. Nothing was verified.");
-        output(await verifyLogin(login, givenCode));
+        output({ ...await verifyLogin(login, givenCode), keepAlive: await armLoginKeepAlive(args, deps) });
         return 0;
       }
       if (givenId !== undefined) {
@@ -264,7 +270,7 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
         // Not an error, but the login is unfinished: a shell chaining on success must not continue.
         return started.status === "phone-required" ? 3 : 0;
       }
-      if (args.flags.has("no-input") || !deps.isInteractive()) return fail("INTERACTIVE_LOGIN_REQUIRED", "Login needs an interactive terminal, or the two flag steps. Run `maccabi login` without --no-input in a real terminal, or `maccabi login --id <id>` and then `maccabi login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No SMS was sent.", 3);
+      if (args.flags.has("no-input") || !deps.isInteractive()) return fail("INTERACTIVE_LOGIN_REQUIRED", INTERACTIVE_LOGIN_HELP, 3);
       await deps.store.load(); // Fail on an unusable session file before requesting credentials or SMS.
       const auth = deps.createAuth();
       try {
@@ -273,9 +279,15 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
         const choices = challenge.phones.filter(phone => phone.smsAvailable);
         let selected = choices[0]?.index;
         if (choices.length > 1) {
+          // The numbers printed are upstream indexes plus one, so they are not contiguous - a real menu
+          // offers 1 and 4. A wrong keystroke re-prompts; ending the login over one would cost an SMS.
+          const options = choices.map(phone => phone.index + 1);
           for (const phone of choices) deps.stderr(`${phone.index + 1}. ${phone.label}\n`);
-          const answer = await deps.prompt("Choose SMS phone number: ");
-          if (!/^\d+$/.test(answer)) throw new UsageError();
+          let answer = await deps.prompt("Choose SMS phone number: ");
+          while (!options.includes(Number(answer))) {
+            deps.stderr(`Enter one of the listed numbers: ${options.join(", ")}.\n`);
+            answer = await deps.prompt("Choose SMS phone number: ");
+          }
           selected = Number(answer) - 1;
         }
         await auth.requestOtp(challenge.id, selected);
@@ -287,7 +299,7 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
         const expectedOwner = { memberId: Number.parseInt(id, 10), memberIdCode: "0" };
         const connected = await deps.connect(session, expectedOwner);
         await deps.store.save({ session: await connected.exportSession(), owner: connected.readers.currentOwner });
-        output({ status: "signed-in", persistence: "session-file" });
+        output({ status: "signed-in", persistence: "session-file", keepAlive: await armLoginKeepAlive(args, deps) });
         return 0;
       } catch (error) {
         await auth.cancelLogin().catch(() => {});
@@ -414,8 +426,11 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
         break;
       }
     }
-    await deps.store.save({ session: await connected.exportSession(), owner: readers.currentOwner });
     output(selectPage(result, args));
+    // The read is already done, so a config directory that cannot be written must not throw it away.
+    // Persisting the refreshed cookies only saves the next command a renewal.
+    try { await deps.store.save({ session: await connected.exportSession(), owner: readers.currentOwner }); }
+    catch { deps.stderr("Warning: the refreshed session could not be saved; the next command may need a new login.\n"); }
     return 0;
   } catch (error) {
     // Only a real reauthentication removes the stored session. A selected dependent and a saved owner
@@ -431,22 +446,37 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
       }
       return fail("AUTH_REQUIRED", "Maccabi rejected the saved session as expired, so it has been removed from local storage; there is nothing left to repair. Run `maccabi login` in an interactive terminal, or `maccabi login --id <id>` and then `maccabi login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No automatic SMS retry was made.", 3);
     }
+    // Raw mode turns Ctrl-C into a data byte rather than a signal, so the normal way to abort the
+    // first command a new member ever runs arrives here as an ordinary rejected promise.
+    if (error instanceof PromptCancelled) return fail("LOGIN_CANCELLED", "Login cancelled. Nothing was saved and no code was verified.", 3);
+    if (error instanceof PromptUnavailable) return fail("INTERACTIVE_LOGIN_REQUIRED", INTERACTIVE_LOGIN_HELP, 3);
     if (error instanceof UsageError) return fail("INVALID_USAGE", error.message, 2);
     if (error instanceof LoginError) return fail(error.code, error.message, 3);
     if (error instanceof SessionStoreError) return fail("SESSION_STORE_UNAVAILABLE", error.message, 1);
+    if (error instanceof MaccabiError && error.code === "SMS_NOT_AVAILABLE") return fail(error.code, "No SMS-capable phone number is on file for this ID, so this login cannot be completed here. No SMS was sent.", 1);
     if (error instanceof MaccabiError && error.code === "REQUEST_TIMEOUT") return fail("REQUEST_TIMEOUT", "The Maccabi request timed out. Check connectivity and try again when ready; no automatic login or SMS retry was made.", 1);
     if (error instanceof MaccabiError && error.code === "REQUEST_ABORTED") return fail("REQUEST_ABORTED", "The Maccabi request was cancelled. No automatic login or SMS retry was made.", 1);
-    if (error instanceof MaccabiError && error.code === "DIRECTORY_CONFIGURATION_UNAVAILABLE") return fail(error.code, "The public directory host served a bot-challenge page instead of the site. This affects all public-directory reads, is scored per request rather than fixed, and is not something this client can reliably get past. Use the official directory in a browser; no search was submitted and no account session was involved.", 1);
-    if (error instanceof MaccabiError && DIRECTORY_COMMANDS.includes(args?.command ?? "")) return fail(error.code, "Public directory request failed. The usual cause is the host's bot challenge, which answers programmatic clients with a challenge page and cannot be reliably got past; otherwise use a current field from directory-fields for the selected category and check connectivity. No account session was used.", 1);
+    // The one sentence a caller must never read as "no providers matched" is authored once in core,
+    // where both the doctors path and the JSON paths raise it, and passed through unchanged here and
+    // by the MCP server. It is a fixed sentence with nothing upstream in it.
+    if (error instanceof MaccabiError && error.code === "DIRECTORY_BOT_CHALLENGE") return fail(error.code, error.message, 1);
+    if (error instanceof MaccabiError && DIRECTORY_COMMANDS.includes(args?.command ?? "")) return fail(error.code, "Public directory request failed, and not with the host's bot challenge, which reports itself as DIRECTORY_BOT_CHALLENGE. Use a current field from directory-fields for the selected category and check connectivity. No provider list was returned, so this is not an empty result, and no account session was used.", 1);
     if (error instanceof MaccabiError) return fail(error.code, "Maccabi operation failed. No automatic login or SMS retry was made.", 1);
     if (error instanceof ReadOperationError) return fail(error.code, READ_ERROR_GUIDANCE[error.code](error.operation), 1);
+    // A path that cannot be written is the caller's choice of --out, not a defect: refusing to
+    // overwrite is documented behaviour, and the catch-all below would answer it with a bug report.
+    const errno = (error as NodeJS.ErrnoException).code;
+    if (errno === "EEXIST") return fail("OUTPUT_FILE_EXISTS", "--out already exists and this command never overwrites a file. Choose another path.", 1);
+    if (errno === "ENOENT") return fail("OUTPUT_DIRECTORY_MISSING", "The directory for --out does not exist. Create it first.", 1);
+    if (errno === "EISDIR") return fail("OUTPUT_PATH_IS_DIRECTORY", "--out must be a file path, not a directory.", 1);
+    if (errno === "EACCES" || errno === "EPERM") return fail("OUTPUT_NOT_WRITABLE", "--out cannot be written with the current permissions. Choose a path you can write.", 1);
     // Nothing above matched, so this is the one branch that means the failure was never anticipated.
     // A usage mistake or a missing login exits through their own branches and is deliberately not sent here.
     return fail("COMMAND_FAILED", `The command could not complete. Check storage and output-file permissions; no automatic retry was made. If that is not it, this is a defect in this client - please report it at ${ISSUES_URL}.`, 1);
   }
 }
 
-const EXPIRY_NOTE = "Estimated absolute cap read from the local session cookie; no request was made. Maccabi also ends an idle session well before this, so run `maccabi keep-alive` to hold one open.";
+const EXPIRY_NOTE = "Estimated absolute cap read from the local session cookie; no request was made. Maccabi also ends an idle session well before this. A finished `maccabi login` starts keep-alive for that hour; if it is not running, `maccabi keep-alive --interval 240 --duration 3600` holds the session open until the cap.";
 /**
  * F5 BIG-IP puts the session's own absolute deadline in F5_ST as `1z1z1z<start>z<timeout>`, both in
  * seconds. Reading it costs nothing and tells the member when a new login becomes unavoidable. The
@@ -476,6 +506,7 @@ async function keepAlive(connected: Connected, args: Args, deps: CliDependencies
     if (!args.flags.has("json")) deps.stderr("Sending best-effort renewal requests for the requested finite duration. Interrupt to stop; browser idle/logout timers are unaffected and continued authentication is not guaranteed.\n");
     while (!signal.aborted && deps.now() < deadline) {
       await connected.readers.renewSession();
+      if (signal.aborted) break;
       await deps.store.save({ session: await connected.exportSession(), owner: connected.readers.currentOwner });
       renewals++;
       if (signal.aborted || deps.now() >= deadline) break;
@@ -486,7 +517,70 @@ async function keepAlive(connected: Connected, args: Args, deps: CliDependencies
   } finally {
     process.removeListener("SIGINT", cancel);
     process.removeListener("SIGTERM", cancel);
+    await releaseKeepAlivePid(deps);
   }
+}
+
+const KEEP_ALIVE_INTERVAL = "240";
+const KEEP_ALIVE_DURATION = "3600";
+
+async function armLoginKeepAlive(args: Args, deps: CliDependencies): Promise<"started" | "disabled" | "not-started"> {
+  if (args.flags.has("no-keep-alive")) return "disabled";
+  try {
+    await deps.stopKeepAlive();
+    await deps.startKeepAlive();
+    return "started";
+  } catch {
+    deps.stderr("Warning: signed in, but the background keep-alive did not start. Run `maccabi keep-alive --interval 240 --duration 3600`.\n");
+    return "not-started";
+  }
+}
+
+function keepAlivePidPath(env: NodeJS.ProcessEnv): string {
+  return join(configDirectory(env), "keep-alive.pid");
+}
+
+/** Hour-long renewal in a detached process, so login itself returns. */
+async function startLoginKeepAlive(deps: CliDependencies): Promise<void> {
+  const script = process.argv[1];
+  if (!script) throw new Error("Cannot locate the maccabi executable to start keep-alive.");
+  const child = spawn(process.execPath, [script, "keep-alive", "--interval", KEEP_ALIVE_INTERVAL, "--duration", KEEP_ALIVE_DURATION], {
+    detached: true, stdio: "ignore", env: deps.env, windowsHide: true,
+  });
+  child.unref();
+  if (!child.pid) throw new Error("Keep-alive process did not start.");
+  const directory = configDirectory(deps.env);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeFile(keepAlivePidPath(deps.env), `${child.pid}\n`, { mode: 0o600 });
+}
+
+async function stopLoginKeepAlive(deps: CliDependencies): Promise<void> {
+  const path = keepAlivePidPath(deps.env);
+  let text: string;
+  try { text = await readFile(path, "utf8"); }
+  catch { return; }
+  const pid = Number(text.trim());
+  if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && (await commandLine(pid)).includes("keep-alive")) {
+    try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+  }
+  await rm(path, { force: true });
+}
+
+async function releaseKeepAlivePid(deps: CliDependencies): Promise<void> {
+  const path = keepAlivePidPath(deps.env);
+  try {
+    if (Number(await readFile(path, "utf8")) !== process.pid) return;
+  } catch { return; }
+  await rm(path, { force: true });
+}
+
+function commandLine(pid: number): Promise<string> {
+  const [file, args] = process.platform === "win32"
+    ? ["powershell.exe", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`]]
+    : ["ps", ["-p", String(pid), "-o", "command="]];
+  return new Promise(resolve => {
+    execFile(file, args, { encoding: "utf8", timeout: 2000 }, (error, stdout) => resolve(error ? "" : stdout));
+  });
 }
 
 /** Explicit local slicing preserves records and source provenance, and never implies server pagination. */

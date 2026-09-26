@@ -7,10 +7,3 @@ export interface MaccabiSession {
   authenticatedAt: string;
   apiAuthorization?: string;
 }
-
-/** Implementations belong to the CLI/server and must provide protected storage. */
-export interface SessionStore {
-  load(): Promise<MaccabiSession | null>;
-  save(session: MaccabiSession): Promise<void>;
-  delete(): Promise<void>;
-}

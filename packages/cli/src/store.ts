@@ -29,7 +29,9 @@ export async function readProtected(path: string): Promise<string | null> {
   try {
     const file = await open(path, "r");
     try {
-      if ((await file.stat()).mode & 0o077) process.stderr.write(`Warning: ${path} is readable by other users; run chmod 600 on it.\n`);
+      // Node reports 0o666/0o444 for every file on Windows, where the bits carry no information and
+      // the advice does not exist, so the check would fire on every command and could never be cleared.
+      if (process.platform !== "win32" && (await file.stat()).mode & 0o077) process.stderr.write(`Warning: ${path} is readable by other users; run chmod 600 on it.\n`);
       return await file.readFile("utf8");
     } finally { await file.close(); }
   } catch (error) {

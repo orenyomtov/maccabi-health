@@ -1,10 +1,23 @@
 import { load } from "cheerio/slim";
 import { createHash, randomUUID } from "node:crypto";
+import { name, version, bugs } from "../../../package.json";
 import { MaccabiError, UpstreamError } from "./errors";
-import { readCappedBody, USER_AGENT, type FetchFunction } from "./transport";
+import { discard, readCappedBody, type FetchFunction } from "./transport";
 import type { ReadResult } from "./readers";
 import { projectDirectoryDetails, type DirectoryProviderDetails } from "./directory-detail";
 export type { DirectoryProviderDetails } from "./directory-detail";
+
+/**
+ * How this client identifies itself to the public directory: our name, our version and where to
+ * complain about us. This is the only place that sets a custom User-Agent; authenticated portal
+ * traffic goes out with Node fetch's default (`User-Agent: node`).
+ *
+ * It is deliberately not a browser string. This host is behind a bot filter that scores each
+ * request, and an honest UA does not get past it: it let one call through and then failed the next
+ * three identical ones. Only a full browser impersonation moved the needle, which is not something
+ * this client does. See docs/CAPABILITIES.md.
+ */
+const USER_AGENT = `${name}/${version} (+${bugs.url})`;
 
 const ORIGIN = "https://serguide.maccabi4u.co.il";
 const ENTRY = ORIGIN + "/heb/doctors/";
@@ -47,6 +60,15 @@ export interface ProviderSearchResult extends Omit<DoctorSearchResult, "specialt
 }
 export interface DirectoryOptions { fetch?: FetchFunction; timeoutMs?: number }
 const invalid = () => new UpstreamError("DIRECTORY_INVALID_RESPONSE");
+/**
+ * The bot filter's answer, which is an HTML page where the site's own data belongs. The two request
+ * shapes meet it differently - a JSON endpoint is handed HTML, and the doctors entry page is handed
+ * HTML with no search configuration in it - but it is one refusal, so it gets one error. It is kept
+ * apart from every other failure for one reason: a caller must never be able to read it as "nobody
+ * matched". Nothing was searched, and the host scores requests rather than applying a fixed rule.
+ */
+const challenge = () => new MaccabiError("DIRECTORY_BOT_CHALLENGE",
+  "The public directory host served a bot-challenge page instead of its own data. No search reached the directory and no provider was checked, so this is not an empty result. The host scores each request rather than applying a fixed rule, so the same call may succeed on a retry; otherwise use the official directory in a browser. No account session was involved.");
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
   return value as Record<string, unknown>;
@@ -75,7 +97,7 @@ function configurationFromHtml(html: string): Record<string, unknown> {
   const $ = load(html, { xml: { xmlMode: false, decodeEntities: false } }, false);
   const scripts = $("script:not([src])").toArray().map(element => $(element).text());
   const candidates = scripts.filter(value => /\b__INITIAL_STATE__\s*=/.test(value));
-  if (candidates.length === 0) throw new MaccabiError("DIRECTORY_CONFIGURATION_UNAVAILABLE", "The public site did not supply the expected search configuration. Check the official doctor directory in your browser; no search was submitted.");
+  if (candidates.length === 0) throw challenge();
   if (candidates.length !== 1) throw invalid();
   const candidate = candidates[0];
   const assignments = [...candidate.matchAll(/\b__INITIAL_STATE__\s*=\s*/g)];
@@ -229,8 +251,11 @@ export class MaccabiDirectory {
       if (error instanceof Error && error.name === "AbortError") throw new UpstreamError("REQUEST_ABORTED");
       throw new UpstreamError("DIRECTORY_REQUEST_FAILED");
     }
-    if (response.status !== 200) throw new UpstreamError("DIRECTORY_HTTP_ERROR", response.status);
-    if ((response.url && response.url !== url) || response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== mime || !response.body) throw invalid();
+    if (response.status !== 200) { await discard(response); throw new UpstreamError("DIRECTORY_HTTP_ERROR", response.status); }
+    if (response.url && response.url !== url) { await discard(response); throw invalid(); }
+    const type = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+    if (type !== mime) { await discard(response); throw type === "text/html" ? challenge() : invalid(); }
+    if (!response.body) { await discard(response); throw invalid(); }
     const bytes = await readCappedBody(response, MAX_BODY, invalid());
     try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
     catch { throw invalid(); }

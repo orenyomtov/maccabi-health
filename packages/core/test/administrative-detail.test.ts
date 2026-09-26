@@ -88,6 +88,8 @@ describe("administrative detail projection", () => {
       service_provider_name: "Provider fixture",
     });
     expect(result.detail.decision).toMatchObject({ kind: "medication_approval", approval_number: "approval", medication: { medication_name: "Medication fixture", largo_code: "123" } });
+    // The field says what could not be read, so it cannot name the object both of these came out of.
+    expect(result.detail.unsupported_sections).toEqual([]);
     expect(result.detail.attachments).toEqual([{ file_name: "Decision fixture", reference: expect.stringMatching(/^[a-f0-9]{64}$/) }]);
     const rotated = structuredClone(result.documents[0]!);
     if (rotated.kind !== "query") throw new Error("synthetic fixture expected query document");

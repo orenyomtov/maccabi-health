@@ -171,6 +171,15 @@ describe("observed ID/SMS/SAML flow", () => {
     }
   });
 
+  test("a rejected OTP ends the challenge so it cannot be submitted again", async () => {
+    const { auth, calls } = fixture({ otpCode: 300 });
+    const challenge = await auth.beginLogin("012345678");
+    await auth.requestOtp(challenge.id);
+    await expect(auth.completeLogin(challenge.id, "123456")).rejects.toMatchObject({ code: "OTP_REJECTED" });
+    await expect(auth.completeLogin(challenge.id, "123456")).rejects.toMatchObject({ code: "UNKNOWN_LOGIN_CHALLENGE" });
+    expect(calls.filter(call => call.url.pathname.endsWith("validate"))).toHaveLength(1);
+  });
+
   test("upstream OTP expiry is typed and does not resend SMS", async () => {
     const { auth, calls } = fixture({ otpCode: 302 });
     const challenge = await auth.beginLogin("012345678");
@@ -234,7 +243,7 @@ describe("cookie and session boundaries", () => {
       expect(new Headers(init?.headers).get("cookie")).toContain("MRHSession=synthetic-session");
       return new Response(null, { status: 302, headers: { location: "/my.policy" } });
     }) });
-    await expect(restored.requestJson("/sonline/synthetic/read")).rejects.toBeInstanceOf(ReauthenticationRequired);
+    await expect(restored.request("/sonline/synthetic/read")).rejects.toBeInstanceOf(ReauthenticationRequired);
     await expect(restored.exportSession()).rejects.toBeInstanceOf(ReauthenticationRequired);
     expect(await restored.hasPortalSession()).toBe(false);
     expect(count).toBe(1);

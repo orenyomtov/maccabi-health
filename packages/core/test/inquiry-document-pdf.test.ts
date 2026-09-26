@@ -130,8 +130,8 @@ test("associated visit exposes original notes and every eligible document withou
   }
 });
 
-test("automatic listed PDF refreshes first source document without details or read-mark mutation",async()=>{
-  const automatic=(path:string)=>({...inquiry(),type:"automatic_sick_permit",document_id:"synthetic-stable-document",medical_forms_documents:[{result_file:path,timestamp:"time",hash:"hash"},{result_file:"not-selected",timestamp:"time",hash:"hash"}]});
+test("automatic listed PDF refreshes its source document without details or read-mark mutation",async()=>{
+  const automatic=(path:string)=>({...inquiry(),type:"automatic_sick_permit",document_id:"synthetic-stable-document",medical_forms_documents:[{result_file:path,timestamp:"time",hash:"hash"}]});
   const t=new MockTransport([bootstrap(),{inquiries:[automatic("initial.pdf")]},{inquiries:[automatic("rotated.pdf")]},pdf()]);
   const reader=await MaccabiReaders.create(t),list=await reader.listInquiries(),ref=list.data[0]!.pdf_reference as string;
   expect(ref).toMatch(/^[a-f0-9]{64}$/);
@@ -142,9 +142,10 @@ test("automatic listed PDF refreshes first source document without details or re
   expect(t.calls.every(call=>!call.init?.method)).toBe(true);
 });
 
-test("automatic document discovery rejects missing identity, unsafe signatures and owner drift",async()=>{
+test("automatic document discovery rejects missing identity, extra documents, unsafe signatures and owner drift",async()=>{
   const row={...inquiry(),type:"automatic_sick_permit",document_id:"stable",medical_forms_documents:[{result_file:"file.pdf",timestamp:"time",hash:"hash"}]};
-  for(const value of [{...row,document_id:null},{...row,medical_forms_documents:[{...row.medical_forms_documents[0],hash:"bad&query=1"}]},{...row,medical_forms_documents:[{...row.medical_forms_documents[0],member_id:999}]}]){
+  // A second document could not be addressed anyway: the one reference is keyed on the row's document_id.
+  for(const value of [{...row,document_id:null},{...row,medical_forms_documents:[{...row.medical_forms_documents[0],hash:"bad&query=1"}]},{...row,medical_forms_documents:[row.medical_forms_documents[0],{...row.medical_forms_documents[0],result_file:"second.pdf"}]},{...row,medical_forms_documents:[{...row.medical_forms_documents[0],member_id:999}]}]){
     const t=new MockTransport([bootstrap(),{inquiries:[value]}]);
     await expect((await MaccabiReaders.create(t)).listInquiries()).rejects.toMatchObject({code:value.medical_forms_documents[0] && "member_id" in value.medical_forms_documents[0]?"OWNER_MISMATCH":"INVALID_RESPONSE"});
     expect(t.calls).toHaveLength(2);

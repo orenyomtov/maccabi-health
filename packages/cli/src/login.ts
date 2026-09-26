@@ -34,7 +34,6 @@ const remainingSeconds = (expiresAt: number) => Math.max(0, Math.round((expiresA
 /** Phone options are numbered from one for the caller; upstream indexes are not contiguous. */
 export async function startLogin(deps: LoginDependencies, id: string, phoneOption?: number): Promise<LoginStart> {
   if (!/^\d{1,9}$/.test(id)) throw new LoginError("INVALID_ID_FORMAT", "The ID number must be digits only, at most nine of them. Nothing was sent.");
-  if (phoneOption !== undefined && !Number.isSafeInteger(phoneOption)) throw new LoginError("INVALID_PHONE_CHOICE", "Choose one of the option numbers listed by the previous attempt. Nothing was sent.");
   await deps.store.load(); // Fail on an unusable session file before requesting an SMS.
   const auth = deps.createAuth();
   try {
@@ -45,6 +44,12 @@ export async function startLogin(deps: LoginDependencies, id: string, phoneOptio
       const pending = await auth.exportPending();
       await deps.pending.save(pending);
       return { status: "phone-required", phones: choices.map(phone => ({ option: phone.index + 1, label: phone.label })), expiresInSeconds: remainingSeconds(pending.expiresAt) };
+    }
+    // Checked here rather than up front because only `beginLogin` knows which numbers this ID offers.
+    // It sends no SMS, so a wrong choice still costs nothing and the valid numbers can be named back.
+    const options = choices.map(phone => phone.index + 1);
+    if (phoneOption !== undefined && !options.includes(phoneOption)) {
+      throw new LoginError("INVALID_PHONE_CHOICE", `Choose one of the option numbers this ID offers: ${options.join(", ")}. Nothing was sent.`);
     }
     const selected = phoneOption === undefined ? choices[0]?.index : phoneOption - 1;
     await auth.requestOtp(challenge.id, selected);

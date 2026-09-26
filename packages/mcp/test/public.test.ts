@@ -42,7 +42,7 @@ describe("maccabi-health/mcp entry-point guard", () => {
 describe("published export surface", () => {
   const CORE_VALUES = [
     "AuthenticationError", "ISSUES_URL", "MaccabiAuth", "MaccabiDirectory", "MaccabiError", "MaccabiReaders",
-    "MaccabiTransport", "OMITTED_KEYS", "READ_ERROR_GUIDANCE", "ReadOperationError", "ReauthenticationRequired",
+    "MaccabiTransport", "READ_ERROR_GUIDANCE", "ReadOperationError", "ReauthenticationRequired",
     "UpstreamError", "safeClinical",
   ];
   const CORE_TYPES = [

@@ -174,7 +174,7 @@ export class MaccabiAuth {
       this.#challenge = undefined;
       return await this.transport.exportSession();
     } catch (error) {
-      if (error instanceof AuthenticationError && ["OTP_EXPIRED", "LOGIN_BLOCKED"].includes(error.code)) this.#challenge = undefined;
+      if (error instanceof AuthenticationError) this.#challenge = undefined;
       throw error;
     } finally { challenge.busy = false; }
   }

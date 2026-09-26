@@ -27,7 +27,7 @@ Add this entry to your MCP client's configuration:
 }
 ```
 
-`npx` resolves this package's single bin, `maccabi`, and passes `mcp` through to it. With a global install, `"command": "maccabi"` and `"args": ["mcp"]` do the same thing without the lookup; if your client cannot resolve the installed bin, use its absolute path. The [README](../README.md#if-your-agent-speaks-mcp) has the per-client variants: Claude Code, Claude Desktop, Cursor, VS Code, Codex and the Windows `cmd /c` wrapper.
+`npx` resolves this package's single bin, `maccabi`, and passes `mcp` through to it. With a global install, `"command": "maccabi"` and `"args": ["mcp"]` do the same thing without the lookup; if your client cannot resolve the installed bin, use its absolute path. The [README](../README.md#mcp) has the per-client variants: Claude Code, Claude Desktop, Cursor, VS Code, Codex and the Windows `cmd /c` wrapper.
 
 Preserve other `mcpServers` entries. Stdout carries only MCP protocol messages. The server stops when the client closes stdin, and on `SIGINT` or `SIGTERM`: it closes the transport, then lets the process exit on its own, so nothing cuts off a reply still being written.
 
@@ -47,7 +47,7 @@ maccabi mcp --http --port 9000
 
 `MACCABI_MCP_PORT` does the same for a client configuration that cannot pass arguments, and `--port` wins when both are set. The value has to be a whole number from 1 to 65535; anything else fails at startup naming what was wrong, rather than binding something unexpected. Both need `--http`: the stdio transport has no port. `--http` and `--port` are the only server flags; there is no server config file. Every URL the server publishes, including the OAuth discovery documents, is built from the port it actually bound, so the rest of the flow needs no further configuration.
 
-The endpoint requires OAuth 2.1, so the client has to be one that speaks MCP authorization: Claude Code, VS Code and Claude Desktop all do. There is nothing to configure: the first request gets a 401 pointing at `/.well-known/oauth-protected-resource/mcp`, the client registers itself, and a browser window opens on this server's own sign-in page asking for your ID number, which phone to text, and the code. Nothing about that leg passes through the model. The full flow, the endpoint table and the redirect rules are in the [authentication guide](AUTH.md#mcp).
+The endpoint requires OAuth 2.1. HTTP OAuth is implemented; it has not been verified end to end against Claude Code, VS Code, Claude Desktop or other clients (an authorized HTTP tool call was not live-validated, and Claude Desktop reaching 127.0.0.1 is untested). On paper there is nothing to configure: the first request gets a 401 pointing at `/.well-known/oauth-protected-resource/mcp`, the client registers itself, and a browser window opens on this server's own sign-in page asking for your ID number, which phone to text, and the code. Nothing about that leg passes through the model. The full flow, the endpoint table and the redirect rules are in the [authentication guide](AUTH.md#mcp).
 
 `--http` writes two more things into the config directory: `oauth.json`, holding registered clients and hashed tokens, and `sessions/<subject>.json`, one credential file per member who has signed in through the browser. These are separate from the CLI's `session.json`. A CLI login does not sign in the HTTP server, and vice versa. `maccabi logout --all` clears them.
 
@@ -87,7 +87,7 @@ Refs are stateless. The same row mints the same token every time, nothing expire
 
 ## How many tools this is, and where that bites
 
-This server registers 38 tools. That is more than some clients want.
+The stdio server registers 38 tools. HTTP drops `maccabi_login_start` and `maccabi_login_verify` (36), because the browser authorization leg replaces them. That is more than some clients want.
 
 Cursor caps the agent at roughly 40 tools counted across every enabled MCP server, not per server. The limit is not in Cursor's own MCP documentation, but users report the agent saying so and report the count being cumulative, so treat the number as approximate and the behavior as real: past the cap Cursor may silently stop offering some tools, and there is no error. The tool is simply not there. At 38 this server fits under the cap on its own, with almost nothing to spare: enable a second server of any size alongside it and you are over. Enabling it on its own is the workaround. Anthropic's own guidance points the same way from a different direction: it puts the threshold for needing on-demand tool loading at 10 or more tools, or tool definitions over 10k tokens, and notes that model tool-selection accuracy degrades past 30 to 50 tools.
 
@@ -100,16 +100,18 @@ There is currently no flag to register a subset. If a client of yours needs one,
 
 ## Results and limits
 
-Tools advertising `offset`/`limit` default to 20 records and accept at most 50, sliced from a newly fetched response. This does not fetch further upstream pages. JSON is capped at 128 KiB; original PDFs at 2 MiB. Core PDF methods cap documents at 2 MiB too, refusing the body mid-stream rather than after buffering it. Document tools embed the bytes directly; their document URI is not a persistent download link. Oversized results fail explicitly.
+Tools advertising `offset`/`limit` default to 20 records and accept at most 50, sliced from a newly fetched response. This does not fetch further upstream pages. On `maccabi_detail` the pair applies to the two ref kinds whose detail is a list of rows - a vaccination group's doses and a prescription's alternatives - and is refused on every other kind, which read one record and return it whole. JSON is capped at 128 KiB; original PDFs at 2 MiB. Core PDF methods cap documents at 2 MiB too, refusing the body mid-stream rather than after buffering it. Document tools embed the bytes directly; their document URI is not a persistent download link. Oversized results fail explicitly.
 
 Exhaust `page.nextOffset` where present, preserve dates, values, units and reference ranges, and report available coverage without claiming complete history. Embedded PDF bytes need a PDF-capable client; this server does not extract text or run OCR. Download success alone does not establish that an agent read the document.
 
-An error result carries guidance and, where there is one, its own `next`. A ref that will not decode returns `INVALID_REFERENCE`; a ref aimed at the wrong tool returns `INVALID_SELECTION` and names the tool that does have what was asked for. Both are decided before any session is resolved, so neither costs an upstream request.
+An error result carries guidance and, where there is one, its own `next`. A ref that will not decode returns `INVALID_REFERENCE`; a ref aimed at the wrong tool returns `INVALID_SELECTION` and names the tool that does have what was asked for, as does a selector the row cannot honour - `variant` on a certificate, `offset` on a visit, a `reference` on a mailing row that already carries its own. Nothing is accepted and then dropped. All of it is decided before any session is resolved, so none of it costs an upstream request.
+
+A public-directory read that fails with `DIRECTORY_BOT_CHALLENGE` was answered by the host's bot filter with a challenge page. Nothing was searched, so it is never an empty result and must not be reported as one; the filter scores each request rather than applying a fixed rule, so the same call may work on a retry.
 
 The `maccabi://service/coverage` resource holds the same coverage text `maccabi_capabilities` embeds; see the [capability reference](CAPABILITIES.md) for the full per-operation table.
 
-The imaging journey above reads the external viewer Maccabi hands scans off to. That path has been executed live end to end on one ultrasound study, but only 8-bit ultrasound is evidenced and no error response from the viewer has ever been captured, so every status-code mapping in it is still an assumption. The [capability reference](CAPABILITIES.md) lists what remains unverified.
+The imaging journey above reads the external viewer Maccabi hands scans off to. That path has been executed live end to end against a live member account, but only 8-bit single-frame imaging is evidenced (1-sample and 3-sample) and no error response from the viewer has ever been captured, so every status-code mapping in it is still an assumption. The [capability reference](CAPABILITIES.md) lists what remains unverified.
 
-Clinic availability starts a scheduling conversation, and session renewal changes expiry state. Their tool annotations reflect those effects. Neither books an appointment; renewal does not guarantee continued authentication and cannot reset a browser idle timer.
+Clinic availability starts a scheduling conversation, and session renewal changes expiry state. Their tool annotations reflect those effects. Neither books an appointment; renewal does not guarantee continued authentication and cannot reset a browser idle timer. `maccabi_logout` is the one tool annotated destructive, because it deletes the saved session and signing back in costs the member another SMS.
 
-[CLI guide](CLI.md) · [API sources](API-SOURCES.md) · [Live validation runs](https://github.com/orenyomtov/maccabi-health/blob/main/docs/research/LIVE-VALIDATION.md) · [Contributing](../CONTRIBUTING.md)
+[CLI guide](CLI.md) · [API sources](https://github.com/orenyomtov/maccabi-health/blob/main/docs/API-SOURCES.md) · [Live validation runs](https://github.com/orenyomtov/maccabi-health/blob/main/docs/research/LIVE-VALIDATION.md) · [Contributing](https://github.com/orenyomtov/maccabi-health/blob/main/CONTRIBUTING.md)

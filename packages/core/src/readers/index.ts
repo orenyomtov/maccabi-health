@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { discard, readCappedBody, readResponseBody, PORTAL_ORIGIN, type TransportRequestInit } from "../transport";
+import { discard, readCappedBody, readResponseBody, LOGIN_ORIGIN, PORTAL_ORIGIN, type TransportRequestInit } from "../transport";
 import { ReauthenticationRequired, ISSUES_URL } from "../errors";
 import { assertLegacyPageOwner, parseLegacyHospitalSettings, parseLegacyRecommendations, parseLegacySelectedSummary, LegacyContentError, LegacyOwnerMismatchError, type LegacyRecommendations, type LegacySelectedSummary } from "./legacy";
 export type { LegacyRecommendations, LegacySelectedSummary } from "./legacy";
@@ -91,7 +91,7 @@ export interface OwnerProfile {
   birth_date: string;
   sex: string;
 }
-export type ReadErrorCode = "UPSTREAM_HTTP" | "INVALID_RESPONSE" | "OWNER_MISMATCH" | "DEPENDENT_SELECTED" | "TOKEN_UNAVAILABLE" | "UPSTREAM_RESULT_ERROR" | "UNSUPPORTED_FLOW" | "NOT_ELIGIBLE";
+export type ReadErrorCode = "UPSTREAM_HTTP" | "INVALID_RESPONSE" | "OWNER_MISMATCH" | "DEPENDENT_SELECTED" | "TOKEN_UNAVAILABLE" | "UPSTREAM_RESULT_ERROR" | "UNSUPPORTED_FLOW" | "NOT_ELIGIBLE" | "SOURCE_MOVED";
 export class ReadOperationError extends Error {
   constructor(readonly code: ReadErrorCode, readonly operation: string, readonly status?: number) {
     super(`Maccabi ${operation}: ${code}${status === undefined ? "" : ` (${status})`}`);
@@ -106,7 +106,7 @@ export class ReadOperationError extends Error {
  * and every message names the operation that failed, which is the only way to tell "recent providers
  * needs an adult account" apart from "that reference is stale".
  *
- * Only the three codes that mean a defect or a missing branch in this client carry the issue link. A
+ * Only the four codes that mean a defect or a missing branch in this client carry the issue link. A
  * stale reference, a selected dependent or a failing portal are not this project's bugs, and putting
  * the link on those would train a caller to ignore it exactly where it matters.
  */
@@ -119,6 +119,7 @@ export const READ_ERROR_GUIDANCE: Record<ReadErrorCode, (operation: string) => s
   DEPENDENT_SELECTED: operation => `The ${operation} read found a different member selected in the Maccabi portal, so the logged-in member and the currently viewed one differ. The session is fine and no new login is needed: switch the portal back to the logged-in member, then retry. Do not sign in again and do not remove the saved session.`,
   UNSUPPORTED_FLOW: operation => `This row belongs to the owner but the source has no ${operation} for it, or this account does not qualify for the flow at all (recent providers, for example, require an adult account). Do not retry with the same input. Choose a different row, a different document variant, or a different tool. If the portal itself does offer this, supporting it is a missing feature: ${ISSUES_URL}.`,
   NOT_ELIGIBLE: operation => `The source says this owner or this row is not eligible for the ${operation} branch. This is a real negative answer, not a transient failure. Do not retry; tell the member the document is not available to them. If the portal does show it to them, that contradiction is a defect worth reporting at ${ISSUES_URL}.`,
+  SOURCE_MOVED: operation => `The ${operation} read depends on a Maccabi frontend asset that is no longer where this client pinned it, so the flow moved upstream rather than failing. Retrying cannot fix it and no argument is wrong. Tell the member this client needs an update to follow the move, and that it is worth an issue at ${ISSUES_URL} naming the operation and the tool or command that failed.`,
 };
 function object(value: unknown, operation: string): SourceRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ReadOperationError("INVALID_RESPONSE", operation);
@@ -237,6 +238,7 @@ export class MaccabiReaders {
   private readonly inquiryDocumentRecords = new Map<string, Map<string, AppointmentDocument>>();
   private readonly inquiryListedDocuments = new Map<string, {reference:string;document:AppointmentDocument}>();
   private readonly certificateReferences = new Map<string, SourceRecord>();
+  private certificateRange?: string;
   private readonly hospitalReferences = new Map<string, SourceRecord>();
   private hospitalReferenceSelection?: string;
   private readonly inquiryReferences = new Map<string, Inquiry>();
@@ -406,7 +408,7 @@ export class MaccabiReaders {
         return raw;
       };
       const query = `file_path=${component(row.link)}&timestamp=${component(row.timestamp)}`;
-      if (!features[0]!.feature_enabled) return this.downloadSourcePdf(`${this.path("MainAppAPI", "v1", "pdf")}?${query}&hash=${component(row.hash)}`, "MainAppAPI", operation, 2 * 1024 * 1024);
+      if (!features[0]!.feature_enabled) return this.downloadSourcePdf(`${this.path("MainAppAPI", "v1", "pdf")}?${query}&hash=${component(row.hash)}`, "MainAppAPI", operation);
       return this.downloadPendingMailingPdf(`${this.path("MainAppAPI", "v2", "pdf")}?${query}`, operation);
     }
     if (row.letter_type === 3) {
@@ -418,7 +420,7 @@ export class MaccabiReaders {
       };
       // The public renderer interpolates these already supplied query components directly.
       const query = `file_path=${component(tutorial.url)}&timestamp=${component(tutorial.timestamp)}&hash=${component(tutorial.hash)}`;
-      return this.downloadSourcePdf(`${this.path("MainAppAPI", "v1", "pdf/http")}?${query}`, "MainAppAPI", operation, 2 * 1024 * 1024);
+      return this.downloadSourcePdf(`${this.path("MainAppAPI", "v1", "pdf/http")}?${query}`, "MainAppAPI", operation);
     }
     const suffix = `letters_for_member/${encodeURIComponent(string(row.reference_id, operation))}/${encodeURIComponent(string(row.name_document, operation))}/pdf`;
     const query = new URLSearchParams({ timestamp: string(row.timestamp, operation), hash: decodeSourceQueryComponent(row.hash, operation) });
@@ -431,13 +433,13 @@ export class MaccabiReaders {
     for (let attempt = 0; attempt < 6; attempt++) {
       const response = await this.transport.request(input);
       const finalUrl = new URL(response.url || input, PORTAL_ORIGIN);
-      if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+      await this.assertStillSignedIn(finalUrl, response);
       if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
       if (finalUrl.origin !== requested.origin || finalUrl.pathname !== requested.pathname || finalUrl.search !== requested.search) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
       if (response.status === 200) {
         if (response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
         const length = response.headers.get("content-length");
-        if (length !== null && /^\d+$/.test(length) && Number(length) > 2 * 1024 * 1024) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
+        if (length !== null && /^\d+$/.test(length) && Number(length) > PDF_BYTE_LIMIT) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
         const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
         if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
         return this.result(bytes, "MainAppAPI", operation);
@@ -461,7 +463,7 @@ export class MaccabiReaders {
       // The captured public script sends this ASP.NET single-quoted envelope. Value is page-bound digits.
       const response = await this.transport.request(path, { method: "POST", apiAuthorization: false, headers: { "content-type": "application/json; charset=utf-8" }, body: `{'value':'${selectedPeriod.value}'}` });
       const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-      if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+      await this.assertStillSignedIn(finalUrl, response);
       if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
       if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
       const raw = await legacyBody(response, operation);
@@ -495,7 +497,7 @@ export class MaccabiReaders {
     const path = "/online/Ajax/DebitsAndCredits/WcDebitsAndCreditsManager.asmx/GetLTCReport";
     const response = await this.transport.request(path, { method: "POST", apiAuthorization: false, headers: { "content-type": "application/json; charset=utf-8" }, body: "" });
     const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    await this.assertStillSignedIn(finalUrl, response);
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     try {
@@ -525,7 +527,7 @@ export class MaccabiReaders {
     const path = "/online/Ajax/DebitsAndCredits/WcDebitsAndCreditsManager.asmx/GetDocFromArchive";
     const response = await this.transport.request(path, { method: "POST", apiAuthorization: false, headers: { "content-type": "application/json; charset=utf-8" }, body: `{'token':'${document.token}', 'reportType':'${document.reportType}'}` });
     const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    await this.assertStillSignedIn(finalUrl, response);
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     let decoded: unknown;
@@ -534,7 +536,7 @@ export class MaccabiReaders {
     if (Object.keys(envelope).length !== 1 || typeof envelope.d !== "boolean") throw new ReadOperationError("INVALID_RESPONSE", operation);
     if (!envelope.d) throw new ReadOperationError("UPSTREAM_RESULT_ERROR", operation);
     const query = `${tokenKey}=${document.token}&ReportType=${document.reportType}&FileName=DebitsAndCreditsReportInformation`;
-    return this.downloadSourcePdf(`/online/Pages/Popups/DebitsAndCredits/DebitsAndCreditsPdfReport.aspx?${query}`, "LegacyBillingCatalog", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`/online/Pages/Popups/DebitsAndCredits/DebitsAndCreditsPdfReport.aspx?${query}`, "LegacyBillingCatalog", operation);
   }
 
   async getMedicalRecommendations(): Promise<ReadResult<LegacyRecommendations>> {
@@ -551,7 +553,7 @@ export class MaccabiReaders {
     const path = "/online/webapi/PersonalRemindersESB/GetReminders/";
     const response = await this.transport.request(path, { apiAuthorization: false });
     const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    await this.assertStillSignedIn(finalUrl, response);
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== path || finalUrl.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     let value: unknown;
@@ -600,7 +602,7 @@ export class MaccabiReaders {
     const response = await this.transport.request("/online/webapi/MailingsFromHospitals/GetMailingsFromHospitals/", { ...this.post(selection), apiAuthorization: false });
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     const finalUrl = new URL(response.url || "/online/webapi/MailingsFromHospitals/GetMailingsFromHospitals/", PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    await this.assertStillSignedIn(finalUrl, response);
     if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname.toLowerCase() !== "/online/webapi/mailingsfromhospitals/getmailingsfromhospitals/" || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const data = object(await readResponseBody(() => response.json(), new ReadOperationError("INVALID_RESPONSE", operation)), operation);
     const message = object(data.ResultMessage, operation);
@@ -640,7 +642,7 @@ export class MaccabiReaders {
     if (!row) throw new ReadOperationError("OWNER_MISMATCH", operation);
     const path = "/online/Pages/Popups/MailingsFromHospitals/MailingsFromHospitals.aspx";
     const query = new URLSearchParams({ path: string(row.LinkPDF, operation), typeCommitment: string(row.TypeCommitmentEgenKey, operation) });
-    return this.downloadSourcePdf(`${path}?${query}`, "LegacyHospitalMailings", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`${path}?${query}`, "LegacyHospitalMailings", operation);
   }
 
   private async readLegacyPage(alias: "directorship/debitsandcredits/" | "directorship/personalreminders/" | "medicalfile/personalrecommendations/" | "medicalfile/summary/" | "medicalfile/mailingsfromhospitals/", operation: string): Promise<string> {
@@ -651,7 +653,7 @@ export class MaccabiReaders {
     const query = new URLSearchParams({ relative: "-1", sr_id: session });
     const response = await this.transport.request(`${path}?${query}`, { apiAuthorization: false });
     const finalUrl = new URL(response.url || path, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    await this.assertStillSignedIn(finalUrl, response);
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname.toLowerCase() !== path.toLowerCase() || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "text/html") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const html = await legacyBody(response, operation);
@@ -795,13 +797,15 @@ export class MaccabiReaders {
     });
     this.certificateReferences.clear();
     for (const [reference, record] of references) this.certificateReferences.set(reference, record);
+    this.certificateRange = JSON.stringify(range);
     return this.result(rows, "MedicalFileAPI", operation);
   }
 
   async getCertificatePdf(reference: string, range: DateRange): Promise<ReadResult<Uint8Array>> {
     validateDateRange(range);
     const operation = "medical-certificate-pdf";
-    if (!this.certificateReferences.has(reference)) await this.listCertificates(range);
+    if (!/^[a-f0-9]{64}$/.test(reference)) throw new ReadOperationError("OWNER_MISMATCH", operation);
+    if (this.certificateRange !== JSON.stringify(range)) await this.listCertificates(range);
     const record = this.certificateReferences.get(reference);
     if (!record) throw new ReadOperationError("OWNER_MISMATCH", operation);
     return this.downloadMedicalFilePdf(record, operation);
@@ -827,11 +831,7 @@ export class MaccabiReaders {
     const operation = "english-medical-summary-pdf";
     const metadata = object(await json(this.transport, this.path("DirectorshipAPI", "v1", "timestampAndHash"), operation), operation);
     const query = new URLSearchParams({ timestamp: string(metadata.timestamp, operation), hash: decodeSourceQueryComponent(metadata.hash, operation) });
-    const response = await this.transport.request(`${this.path("DirectorshipAPI", "v1", "report/english/")}?${query}`, { apiAuthorization: false });
-    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
-    const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
-    if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
-    return this.result(bytes, "DirectorshipAPI", operation);
+    return this.downloadSourcePdf(`${this.path("DirectorshipAPI", "v1", "report/english/")}?${query}`, "DirectorshipAPI", operation);
   }
 
   /** Current payment-method metadata, excluding the full bank account number and authorization material. */
@@ -955,9 +955,9 @@ export class MaccabiReaders {
     const document = this.administrativeDocuments.get(interactionId)?.get(reference);
     if (!document) throw new ReadOperationError("OWNER_MISMATCH", operation);
     if (document.kind === "base64") {
-      if (document.base64.length > Math.ceil(2 * 1024 * 1024 / 3) * 4) throw new ReadOperationError("INVALID_RESPONSE", operation);
+      if (document.base64.length > Math.ceil(PDF_BYTE_LIMIT / 3) * 4) throw new ReadOperationError("INVALID_RESPONSE", operation);
       const bytes = decodeBase64Pdf(document.base64, operation);
-      if (bytes.byteLength > 2 * 1024 * 1024) throw new ReadOperationError("INVALID_RESPONSE", operation);
+      if (bytes.byteLength > PDF_BYTE_LIMIT) throw new ReadOperationError("INVALID_RESPONSE", operation);
       return this.result(bytes, "RequestsAndApprovalsAPI", operation);
     }
     const component = (value: unknown): string => {
@@ -966,7 +966,7 @@ export class MaccabiReaders {
       return raw;
     };
     const query = `doc_uri=${component(document.uri)}&timestamp=${component(document.timestamp)}&hash=${component(document.hash)}`;
-    return this.downloadSourcePdf(`${this.path("RequestsAndApprovalsAPI", "v1", "service_requests_document")}?${query}`, "RequestsAndApprovalsAPI", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`${this.path("RequestsAndApprovalsAPI", "v1", "service_requests_document")}?${query}`, "RequestsAndApprovalsAPI", operation);
   }
 
   async listInquiries(): Promise<ReadResult<Inquiry[]>> {
@@ -985,6 +985,7 @@ export class MaccabiReaders {
       if (row.request_subjects !== null && row.request_subjects !== undefined) selected.request_subjects = this.rows(row.request_subjects, operation).map(subject => ({ id: subject.id, name: string(subject.name, operation) }));
       if (row.type === "automatic_sick_permit") {
         const documents = this.rows(row.medical_forms_documents, operation);
+        if (documents.length > 1) throw new ReadOperationError("INVALID_RESPONSE", operation);
         const document = documents[0];
         if (document && typeof document.result_file === "string" && document.result_file) {
           const documentId = row.document_id;
@@ -1335,15 +1336,20 @@ export class MaccabiReaders {
   private async getAppointmentAuthentication(): Promise<string> {
     if (this.#appointmentAuthentication) return this.#appointmentAuthentication;
     const operation = "appointment-source";
-    // Exact public static asset observed in S4 record426. No source is evaluated or executed.
+    // Exact public static asset observed in S4 record426. No source is evaluated or executed. The
+    // filename carries the bundle's content hash, so Maccabi's next frontend deploy retires this path
+    // and every check below stops matching. That is the asset moving, not the portal failing and not a
+    // bad argument, so all four raise SOURCE_MOVED: a retry cannot help and only a new pin can.
     const response = await this.transport.request("/sonline/appointmentOrder/static/js/async/467.5c814e7c.js", { apiAuthorization: false });
+    // A gone asset is the predicted end of this pin; any other HTTP failure is the portal itself.
+    if (response.status === 404 || response.status === 410) { await discard(response); throw new ReadOperationError("SOURCE_MOVED", operation, response.status); }
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-    if (contentType !== "application/javascript" && contentType !== "text/javascript") { await discard(response); throw new ReadOperationError("UNSUPPORTED_FLOW", operation); }
+    if (contentType !== "application/javascript" && contentType !== "text/javascript") { await discard(response); throw new ReadOperationError("SOURCE_MOVED", operation); }
     const source = await readResponseBody(() => response.text(), new ReadOperationError("INVALID_RESPONSE", operation));
-    if (source.length > 8_000_000 || !source.includes("/odoro/session") || !source.includes("/odoro/dialog")) throw new ReadOperationError("UNSUPPORTED_FLOW", operation);
+    if (source.length > 8_000_000 || !source.includes("/odoro/session") || !source.includes("/odoro/dialog")) throw new ReadOperationError("SOURCE_MOVED", operation);
     const matches = [...source.matchAll(/\b[A-Za-z_$][\w$]*="\/sonline\/AppointmentOrderAPI\/webapi\/mac\/",[A-Za-z_$][\w$]*="([a-f0-9]{32})"/g)];
-    if (matches.length !== 1) throw new ReadOperationError("UNSUPPORTED_FLOW", operation);
+    if (matches.length !== 1) throw new ReadOperationError("SOURCE_MOVED", operation);
     this.#appointmentAuthentication = matches[0]![1]!;
     return this.#appointmentAuthentication;
   }
@@ -1451,7 +1457,7 @@ export class MaccabiReaders {
     try { encodedPath = encodeURIComponent(path); } catch { throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const service = informationSheet ? "MedicalFileAPI" : "AppointmentOrderAPI";
     const query = `${informationSheet ? "url" : "path"}=${encodedPath}&timestamp=${component(timestampValue)}&hash=${component(hashValue)}`;
-    return this.downloadSourcePdf(`${this.path(service, informationSheet ? "v2" : "v1", "pdf")}?${query}`, service, operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`${this.path(service, informationSheet ? "v2" : "v1", "pdf")}?${query}`, service, operation);
   }
 
   /** Downloads only a PDF reference obtained from this owner's referral list. Does not mark it read. */
@@ -1463,16 +1469,25 @@ export class MaccabiReaders {
     return this.downloadMedicalFilePdf(referral, operation);
   }
 
-  private async downloadSourcePdf(input: string, service: string, operation: string, maxBytes: number = PDF_BYTE_LIMIT): Promise<ReadResult<Uint8Array>> {
+  /**
+   * The non-redirect form of an expired session: a 200 logout page served on the portal origin,
+   * which the transport's own redirect check never sees. Every read that handles its own response
+   * runs this before it trusts the body.
+   */
+  private async assertStillSignedIn(finalUrl: URL, response: Response): Promise<void> {
+    if (finalUrl.origin === LOGIN_ORIGIN || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+  }
+
+  private async downloadSourcePdf(input: string, service: string, operation: string): Promise<ReadResult<Uint8Array>> {
     const requested = new URL(input, PORTAL_ORIGIN);
     const response = await this.transport.request(input, { apiAuthorization: false });
     const finalUrl = new URL(response.url || input, PORTAL_ORIGIN);
-    if (finalUrl.origin === "https://mac.maccabi4u.co.il" || ["/my.logout.php3", "/my.policy", "/mac/login"].includes(finalUrl.pathname.toLowerCase())) { await discard(response); throw new ReauthenticationRequired(response.status); }
+    await this.assertStillSignedIn(finalUrl, response);
     if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
     if (finalUrl.origin !== PORTAL_ORIGIN || finalUrl.pathname !== requested.pathname || finalUrl.search !== requested.search || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/pdf") { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const declaredLength = response.headers.get("content-length");
-    if (declaredLength !== null && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
-    const bytes = await readCappedBody(response, maxBytes, new ReadOperationError("INVALID_RESPONSE", operation));
+    if (declaredLength !== null && /^\d+$/.test(declaredLength) && Number(declaredLength) > PDF_BYTE_LIMIT) { await discard(response); throw new ReadOperationError("INVALID_RESPONSE", operation); }
+    const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
     if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
     return this.result(bytes, service, operation);
   }
@@ -1482,11 +1497,7 @@ export class MaccabiReaders {
     try { path = decodeURIComponent(string(record.pdf_link, operation)); hash = decodeURIComponent(string(record.hash, operation)); }
     catch { throw new ReadOperationError("INVALID_RESPONSE", operation); }
     const query = new URLSearchParams({ path, timestamp: string(record.timestamp, operation), hash });
-    const response = await this.transport.request(`${this.path("MedicalFileAPI", "v1", "pdf")}?${query}`, { apiAuthorization: false });
-    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
-    const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
-    if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
-    return this.result(bytes, "MedicalFileAPI", operation);
+    return this.downloadSourcePdf(`${this.path("MedicalFileAPI", "v1", "pdf")}?${query}`, "MedicalFileAPI", operation);
   }
 
   /** Captured default test list includes laboratory and other results; no server date paging is established. */
@@ -1534,11 +1545,7 @@ export class MaccabiReaders {
     if (!hasSourceDocument(record)) throw new ReadOperationError("UNSUPPORTED_FLOW", operation);
     const gender = this.profile.sex === "נ" ? "2" : "1";
     const query = new URLSearchParams({ memberidcode: this.owner.memberIdCode, memberid: String(this.owner.memberId), data: string(record.doc_id, operation), t: string(record.time_stamp, operation), hash: decodeSourceQueryComponent(record.hash, operation), loggedInUserGender: gender, currentUsergender: gender, memberIdForHeader: String(this.owner.memberId), memberIdCodeForHeader: this.owner.memberIdCode });
-    const response = await this.transport.request(`/sonline/TestResultsAPI/webapi/mac/pdf/openfile?${query}`, { apiAuthorization: false });
-    if (!response.ok) { await discard(response); throw new ReadOperationError("UPSTREAM_HTTP", operation, response.status); }
-    const bytes = await readCappedBody(response, PDF_BYTE_LIMIT, new ReadOperationError("INVALID_RESPONSE", operation));
-    if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/pdf" || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new ReadOperationError("INVALID_RESPONSE", operation);
-    return this.result(bytes, "TestResultsAPI", operation);
+    return this.downloadSourcePdf(`/sonline/TestResultsAPI/webapi/mac/pdf/openfile?${query}`, "TestResultsAPI", operation);
   }
 
   /**
@@ -1657,7 +1664,7 @@ export class MaccabiReaders {
     await this.listLatestLabResults();
     const data = this.latestLabMetadata!;
     const query = new URLSearchParams({ t: string(data.time_stamp, operation), hash: decodeSourceQueryComponent(data.hash, operation), irregular_only: String(options.irregularOnly ?? false), is_attachment: "false" });
-    return this.downloadSourcePdf(`${this.path("TestResultsAPI", "v1", "getlatestlabresults/report")}?${query}`, "TestResultsAPI", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`${this.path("TestResultsAPI", "v1", "getlatestlabresults/report")}?${query}`, "TestResultsAPI", operation);
   }
 
   /** Existing tracking selection only; never adds or removes followed tests. */
@@ -1688,7 +1695,7 @@ export class MaccabiReaders {
       return raw;
     };
     const query = `t=${component(data.timestamp)}&hash=${component(data.hash)}&is_attachment=false`;
-    return this.downloadSourcePdf(`${this.path("TestResultsAPI", "v1", "followed/report")}?${query}`, "TestResultsAPI", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`${this.path("TestResultsAPI", "v1", "followed/report")}?${query}`, "TestResultsAPI", operation);
   }
 
   private async resolveLabTest(selection: LabTestSelection, operation: string): Promise<SourceRecord> {
@@ -1749,7 +1756,7 @@ export class MaccabiReaders {
     if (view === "graph" && ![current, ...comparison.data.other_results].some(row => row.max_lim !== 0 || row.result !== 0)) throw new ReadOperationError("NOT_ELIGIBLE", operation);
     const query = new URLSearchParams({ test_id: selection.testId, t: string(comparison.raw.timestamp, operation), hash: decodeSourceQueryComponent(comparison.raw.hash, operation), date_of_result: comparison.date, is_attachment: "false", is_graph: String(view === "graph"), test_des: current.test_desc, lab_date: current.lab_date });
     const path = `/sonline/TestResultsAPI/webapi/mac/v1/compare/${encodeURIComponent(this.owner.memberIdCode)}/${this.owner.memberId}/compare/report`;
-    return this.downloadSourcePdf(`${path}?${query}`, "TestResultsAPI", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`${path}?${query}`, "TestResultsAPI", operation);
   }
 
   /**
@@ -1797,7 +1804,7 @@ export class MaccabiReaders {
     try { file = encodeURIComponent(row.result_file); } catch { throw new ReadOperationError("INVALID_RESPONSE", operation); }
     // Source explicitly encodes the attachment path; the remaining components are interpolated.
     const query = `data=${file}&t=${component(row.time_stamp)}&hash=${component(row.hash)}&testDes=${component(row.test_desc, true)}&labDate=${component(row.lab_date, true)}`;
-    return this.downloadSourcePdf(`/sonline/TestResultsAPI/webapi/mac/pdf/showresult?${query}`, "TestResultsAPI", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`/sonline/TestResultsAPI/webapi/mac/pdf/showresult?${query}`, "TestResultsAPI", operation);
   }
 
   /** Original complete individual laboratory report using fresh owner detail and source print flags. */
@@ -1816,7 +1823,7 @@ export class MaccabiReaders {
       return raw;
     };
     const query = `request_id=${component(requestId)}&t=${component(data.time_stamp)}&hash=${component(data.hash)}&irregular_only=${options.irregularOnly ?? false}&is_attachment=false&is_partial=${data.is_partial}&date=${component(data.execute_date)}`;
-    return this.downloadSourcePdf(`${this.path("TestResultsAPI", "v1", "getresultsbyid/report")}?${query}`, "TestResultsAPI", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`${this.path("TestResultsAPI", "v1", "getresultsbyid/report")}?${query}`, "TestResultsAPI", operation);
   }
 
   /** Existing-profile direct-print branch only; never submits identity details. */
@@ -1836,7 +1843,7 @@ export class MaccabiReaders {
       return raw;
     };
     const query = `data=${component(requestId)}&t=${component(data.corona_t)}&hash=${component(data.corona_hash)}`;
-    return this.downloadSourcePdf(`${this.path("TestResultsAPI", "v1", "labs/corona/Report")}?${query}`, "TestResultsAPI", operation, 2 * 1024 * 1024);
+    return this.downloadSourcePdf(`${this.path("TestResultsAPI", "v1", "labs/corona/Report")}?${query}`, "TestResultsAPI", operation);
   }
 
   /** Ownership only: the pair must name exactly one row of this owner's freshly listed tests. */
