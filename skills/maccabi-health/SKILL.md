@@ -48,6 +48,16 @@ maccabi-health login --code 000000 --no-input
 
 One try per code. A wrong code ends that text. Do not submit it again. Ask if they want a new text and start over with `--id`. The code expires after ten minutes. After a successful login the session expires on its own after one hour, even if you keep using it. Then ask the same way again.
 
+### Browser login (when the host blocks `--id` / `--code`)
+
+Use this when the host refuses to run a command that contains an ID or SMS code (classifier, "exfiltration"), or when you prefer the user to enter the ID and the SMS code themselves so those values are not passed through you.
+
+```sh
+maccabi-health login --http
+```
+
+Give them the printed https URL and ask them to open it and sign in there. Ask them to tell you when they have finished. You can also poll with `maccabi-health status --verify --no-input` (exit 0 means the session is saved, exit 3 means not yet). The page stays up for ten minutes.
+
 `maccabi-health` lists the commands. `maccabi-health help` is the full reference, about 6,000 tokens:
 
 ```text

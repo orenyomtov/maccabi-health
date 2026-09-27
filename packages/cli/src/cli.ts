@@ -11,6 +11,7 @@ import {
 import { configDirectory, CredentialStore, FilePendingLoginStore, FileSessionStore, PendingLoginStore, removeProtected, SessionStoreError } from "./store";
 import { LoginAuthDriver, LoginDependencies, LoginError, loginStatus, logoutLocal, startLogin, verifyLogin } from "./login";
 import { PromptCancelled, PromptUnavailable, terminalPrompt } from "./prompt";
+import { runHttpLogin, runHttpLoginBackground, type HttpLoginDependencies } from "./http-login";
 
 import { COMMANDS, MCP_COMMAND, VERSION, commandOptions, discovery, help, index, indexDiscovery } from "./commands";
 const DIRECTORY_COMMANDS = ["directory-fields", "directory-cities", "directory-search", "directory-detail"];
@@ -51,6 +52,8 @@ export interface CliDependencies {
   stopKeepAlive(): Promise<void>;
   /** Writes bytes to a new private file. Named for its first caller; imaging bytes use it too. */
   savePdf(path: string, bytes: Uint8Array): Promise<void>;
+  /** Test seams for `login --http`. */
+  httpLogin?: Partial<HttpLoginDependencies>;
 }
 function defaults(): CliDependencies {
   return {
@@ -97,7 +100,7 @@ function parse(argv: string[]): Args {
     if (!arg.startsWith("--")) throw new UsageError("Unexpected argument. This command takes options only.");
     const key = arg.slice(2);
     if (!commandOptions(command).includes(key) || parsed.has(key)) throw new UsageError(`Unknown or repeated option. Run maccabi-health help ${command} for the options it takes. Credentials are never accepted as arguments.`);
-    if (["json", "verify", "no-input", "irregular-only"].includes(key) || command === "login" && ["status", "no-keep-alive"].includes(key) || command === "logout" && key === "all") parsed.set(key, true);
+    if (["json", "verify", "no-input", "irregular-only"].includes(key) || command === "login" && ["status", "no-keep-alive", "http", "no-tunnel", "no-background"].includes(key) || command === "logout" && key === "all") parsed.set(key, true);
     else {
       const value = argv[++index];
       if (!value || value.startsWith("--")) throw new UsageError(`That option needs a value. Run maccabi-health help ${command}.`);
@@ -249,6 +252,31 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
     }
     if (args.command === "login") {
       if (args.flags.has("status")) { output(await loginStatus(login)); return 0; }
+      if (args.flags.has("no-tunnel") && !args.flags.has("http")) throw new UsageError("--no-tunnel needs --http.");
+      if (args.flags.has("no-background") && !args.flags.has("http")) throw new UsageError("--no-background needs --http.");
+      if (args.flags.has("http")) {
+        if (args.flags.has("id") || args.flags.has("code") || args.flags.has("phone") || deps.env.MACCABI_ID || deps.env.MACCABI_OTP) {
+          throw new UsageError("--http is a browser sign-in; do not combine it with --id, --code, --phone, MACCABI_ID or MACCABI_OTP.");
+        }
+        const httpDeps: HttpLoginDependencies = {
+          env: deps.env, store: deps.store, createAuth: deps.createAuth, connect: deps.connect,
+          stdout: deps.stdout, stderr: deps.stderr, ...deps.httpLogin,
+        };
+        if (!args.flags.has("no-background")) {
+          return await runHttpLoginBackground(httpDeps, argv);
+        }
+        const code = await runHttpLogin(httpDeps, { tunnel: !args.flags.has("no-tunnel") });
+        if (code === 0 && !args.flags.has("no-keep-alive")) {
+          // Same post-login arming as --code; the browser path also lands a session file.
+          try {
+            await deps.stopKeepAlive();
+            await deps.startKeepAlive();
+          } catch {
+            deps.stderr("Warning: signed in, but the background keep-alive did not start. Run `maccabi-health keep-alive --interval 240 --duration 3600`.\n");
+          }
+        }
+        return code;
+      }
       const givenId = args.flags.has("id") ? required(args, "id") : deps.env.MACCABI_ID || undefined;
       const givenCode = args.flags.has("code") ? required(args, "code") : deps.env.MACCABI_OTP || undefined;
       if (givenId !== undefined && givenCode !== undefined) throw new UsageError("Start a login with --id, then finish it with --code, as two separate commands.");

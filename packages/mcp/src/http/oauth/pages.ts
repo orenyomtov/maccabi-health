@@ -70,10 +70,16 @@ ${form(sessionId, csrf, "otp", `<label for="code">SMS code</label>
 }
 
 /** Terminal page. It never renders upstream text: the only interpolated value is one of our own messages. */
-export function errorPage(message: string): string {
+export function errorPage(message: string, restartHint = "Close this window and start again from your MCP client."): string {
   return layout("Sign-in stopped", `<h1>Sign-in stopped</h1>
 <p>${escapeHtml(message)}</p>
-<p class="note">Close this window and start again from your MCP client.</p>`);
+<p class="note">${escapeHtml(restartHint)}</p>`);
+}
+
+/** Shown after a CLI browser sign-in writes the session file. No upstream text. */
+export function donePage(): string {
+  return layout("Signed in", `<h1>Signed in</h1>
+<p>You can close this window. The session is saved on this machine.</p>`);
 }
 
 function errorBlock(error?: string): string {

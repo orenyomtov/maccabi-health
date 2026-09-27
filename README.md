@@ -37,7 +37,7 @@ npx -y maccabi-health login
 npx -y maccabi-health labs --limit 10
 ```
 
-`maccabi-health login` asks for your ID and the SMS code in the terminal.
+`maccabi-health login` asks for your ID and the SMS code in the terminal. If an agent prefers the user to sign in directly in the browser, `maccabi-health login --http` prints a URL that the user can be redirected to to login instead, and it writes to the same session file that the CLI uses.
 
 If `maccabi-health` is not on your PATH after a global install, use the absolute path to the bin or stick with `npx`.
 

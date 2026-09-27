@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `maccabi-health login --http` opens the browser sign-in form on a Cloudflare tunnel, returns immediately, and writes the normal CLI session file. `--no-tunnel` and `--no-background` turn those defaults off.
+
 ## 0.1.1
 
 - The command is `maccabi-health`. The `maccabi` binary from 0.1.0 is not installed.
