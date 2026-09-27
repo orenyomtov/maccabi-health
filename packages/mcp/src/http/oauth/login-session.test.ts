@@ -11,13 +11,13 @@ describe("the sign-in slot table", () => {
   test("a full table gives up an untouched page but never one holding a challenge", () => {
     const sessions = new AuthorizeSessions();
     const open = Array.from({ length: MAX_SESSIONS }, () => sessions.create(PARAMS)!);
-    const ninth = sessions.create(PARAMS);
+    const extra = sessions.create(PARAMS);
     // Nobody typed into the oldest page, so nothing upstream is lost by dropping it.
-    expect(ninth).not.toBeNull();
+    expect(extra).not.toBeNull();
     expect(sessions.get(open[0]!.id)).toBeNull();
 
     // Once every slot holds a live challenge, evicting one would cost that member an SMS, so it refuses.
-    for (const session of [...open.slice(1), ninth!]) session.phase = "otp";
+    for (const session of [...open.slice(1), extra!]) session.phase = "otp";
     expect(sessions.create(PARAMS)).toBeNull();
   });
 });

@@ -71,7 +71,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "maccabi": "./dist/cli.js"
+    "maccabi-health": "./dist/cli.js"
   },
   "files": [
     "dist",

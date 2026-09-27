@@ -17,7 +17,7 @@ export interface PendingLoginStore {
 }
 /** Local protected storage, not upstream: it carries its own code so callers never report it as a failed Maccabi read. */
 export class SessionStoreError extends MaccabiError {
-  constructor(message = "The saved session file could not be read or written. Check the permissions of the maccabi config directory and retry.") { super("SESSION_STORE_UNAVAILABLE", message); }
+  constructor(message = "The saved session file could not be read or written. Check the permissions of the maccabi-health config directory and retry.") { super("SESSION_STORE_UNAVAILABLE", message); }
 }
 export function configDirectory(environment: NodeJS.ProcessEnv = process.env): string {
   if (environment.MACCABI_CONFIG_DIR) return environment.MACCABI_CONFIG_DIR;
@@ -72,7 +72,7 @@ export class FileSessionStore implements CredentialStore {
         typeof saved.session.authenticatedAt !== "string" || !Number.isSafeInteger(saved.owner?.memberId) ||
         typeof saved.owner.memberIdCode !== "string") throw new Error("Invalid session");
       return saved;
-    } catch { throw new SessionStoreError(`${this.path} is not a usable saved session. Run maccabi logout, then log in again.`); }
+    } catch { throw new SessionStoreError(`${this.path} is not a usable saved session. Run maccabi-health logout, then log in again.`); }
   }
   async save(login: SavedLogin): Promise<void> { await writeProtected(this.path, login); }
   async delete(): Promise<void> { await removeProtected(this.path); }
@@ -93,7 +93,7 @@ export class FilePendingLoginStore implements PendingLoginStore {
       if (pending.version !== 1 || typeof pending.id !== "string" || typeof pending.senderJwt !== "string" ||
         !Number.isSafeInteger(pending.memberId) || !Array.isArray(pending.phones) ||
         !Number.isFinite(pending.expiresAt) || !Array.isArray(pending.cookies?.cookies)) throw new Error("Invalid pending login");
-    } catch { throw new SessionStoreError(`${this.path} is not a usable pending login. Run maccabi logout, then log in again.`); }
+    } catch { throw new SessionStoreError(`${this.path} is not a usable pending login. Run maccabi-health logout, then log in again.`); }
     // The challenge carries its own ten-minute deadline; past it the file is gone, not resumable.
     if (this.now() >= pending.expiresAt) { await this.delete(); return null; }
     return pending;

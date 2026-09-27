@@ -5,7 +5,7 @@ The same operations are available over standard MCP stdio or local Streamable HT
 For account reads, sign in once. In your own terminal:
 
 ```sh
-maccabi login
+maccabi-health login
 ```
 
 Over stdio, `maccabi_login_start`, `maccabi_login_verify`, `maccabi_login_status` and `maccabi_logout` do the same from a client. The first two are the only tools that take an identity number or an SMS code, and both values then sit in the model's context, so use the terminal when you have one. Over HTTP those two tools do not exist: the sign-in runs in your own browser as part of authorization, and only `maccabi_login_status` and `maccabi_logout` are registered. Starting either transport does not log in and does not read or write the saved credential. Account tools request it only when called. Public directory tools need no account. Missing or expired account sessions return login guidance; they never send SMS or retry a login by themselves.
@@ -19,7 +19,7 @@ Add this entry to your MCP client's configuration:
 ```json
 {
   "mcpServers": {
-    "maccabi": {
+    "maccabi-health": {
       "command": "npx",
       "args": ["-y", "maccabi-health", "mcp"]
     }
@@ -27,14 +27,14 @@ Add this entry to your MCP client's configuration:
 }
 ```
 
-`npx` resolves this package's single bin, `maccabi`, and passes `mcp` through to it. With a global install, `"command": "maccabi"` and `"args": ["mcp"]` do the same thing without the lookup; if your client cannot resolve the installed bin, use its absolute path. The [README](../README.md#mcp) has the per-client variants: Claude Code, Claude Desktop, Cursor, VS Code, Codex and the Windows `cmd /c` wrapper.
+`npx` resolves this package's single bin, `maccabi-health`, and passes `mcp` through to it. With a global install, `"command": "maccabi-health"` and `"args": ["mcp"]` do the same thing without the lookup; if your client cannot resolve the installed bin, use its absolute path.
 
 Preserve other `mcpServers` entries. Stdout carries only MCP protocol messages. The server stops when the client closes stdin, and on `SIGINT` or `SIGTERM`: it closes the transport, then lets the process exit on its own, so nothing cuts off a reply still being written.
 
 ## Streamable HTTP
 
 ```sh
-maccabi mcp --http
+maccabi-health mcp --http
 ```
 
 Connect your client to `http://127.0.0.1:8765/mcp`. The listener is fixed to loopback. It uses the official SDK Streamable HTTP handler and Node adapter, with localhost Host/Origin checks. Hosting, TLS and tunnels are outside this project's scope.
@@ -42,18 +42,20 @@ Connect your client to `http://127.0.0.1:8765/mcp`. The listener is fixed to loo
 If something else already owns 8765, choose another port:
 
 ```sh
-maccabi mcp --http --port 9000
+maccabi-health mcp --http --port 9000
 ```
 
 `MACCABI_MCP_PORT` does the same for a client configuration that cannot pass arguments, and `--port` wins when both are set. The value has to be a whole number from 1 to 65535; anything else fails at startup naming what was wrong, rather than binding something unexpected. Both need `--http`: the stdio transport has no port. `--http` and `--port` are the only server flags; there is no server config file. Every URL the server publishes, including the OAuth discovery documents, is built from the port it actually bound, so the rest of the flow needs no further configuration.
 
 The endpoint requires OAuth 2.1. HTTP OAuth is implemented; it has not been verified end to end against Claude Code, VS Code, Claude Desktop or other clients (an authorized HTTP tool call was not live-validated, and Claude Desktop reaching 127.0.0.1 is untested). On paper there is nothing to configure: the first request gets a 401 pointing at `/.well-known/oauth-protected-resource/mcp`, the client registers itself, and a browser window opens on this server's own sign-in page asking for your ID number, which phone to text, and the code. Nothing about that leg passes through the model. The full flow, the endpoint table and the redirect rules are in the [authentication guide](AUTH.md#mcp).
 
-`--http` writes two more things into the config directory: `oauth.json`, holding registered clients and hashed tokens, and `sessions/<subject>.json`, one credential file per member who has signed in through the browser. These are separate from the CLI's `session.json`. A CLI login does not sign in the HTTP server, and vice versa. `maccabi logout --all` clears them.
+`--http` writes two more things into the config directory: `oauth.json`, holding registered clients and hashed tokens, and `sessions/<subject>.json`, one credential file per member who has signed in through the browser. These are separate from the CLI's `session.json`. A CLI login does not sign in the HTTP server, and vice versa. `maccabi-health logout --all` clears them.
 
-The stdio server renews the saved session on a 240-second timer, because it is the only long-lived process here. A CLI command is a new process that cannot outlive its own run, and Maccabi's idle timeout kills a session between commands. The timer shares the tools' `exclusive()` executor, so a renewal never overlaps a tool call on the same session, and it saves the refreshed cookies through the same lease. It is `unref`'d, so it never keeps the process alive, and it is cleared when the server closes. A tick with no stored session does nothing and tries again later. A tick that fails stops the timer and writes one line to stderr; it never deletes the stored session, because replacing that credential costs the member an SMS. `--http` gets no such timer: it is multi-user with per-member leases, where a single global timer would be meaningless.
+The stdio server renews the saved session on a 240-second timer, because it is the only long-lived process here. A CLI command is a new process that cannot outlive its own run, and Maccabi's idle timeout kills a session between commands. The timer shares the tools' `exclusive()` executor, so a renewal never overlaps a tool call on the same session, and it saves the refreshed cookies through the same lease. It is `unref`'d, so it never keeps the process alive, and it is cleared when the server closes. A tick with no stored session does nothing and tries again later. A tick that fails stops the timer and writes one line to stderr; it never deletes the stored session, because replacing that credential costs the member an SMS.
 
-The timer was confirmed firing against a live session on 2026-09-23, with ticks 237 and 239 seconds apart and a falsification step ruling out a concurrent CLI `keep-alive` as the source of the writes. It holds off Maccabi's idle timeout and does not extend the absolute cap, so a long-running stdio server still loses its session roughly an hour after login and needs a fresh `maccabi login`. Details in [Live validation runs](https://github.com/orenyomtov/maccabi-health/blob/main/docs/research/LIVE-VALIDATION.md) and [Session lifetime research](https://github.com/orenyomtov/maccabi-health/blob/main/docs/research/SESSION-LIFETIME.md).
+`--http` uses that same timer, one per member rather than one for the process. It starts when that member finishes the browser sign-in, and again for every `sessions/<subject>.json` already on disk when the server starts, so a restart does not drop the rest of the hour. Each timer uses that member's own executor. It stops when they log out, when the server closes, or when Maccabi rejects the session. Rejection is the hour-long absolute cap: renewal holds off the idle timeout and does not move the cap. A failed tick still leaves the session file in place; the next tool call is what reports it and revokes the token.
+
+The timer was confirmed firing against a live session on 2026-09-23, with ticks 237 and 239 seconds apart and a falsification step ruling out a concurrent CLI `keep-alive` as the source of the writes. It holds off Maccabi's idle timeout and does not extend the absolute cap, so a long-running stdio server still loses its session an hour after login and needs a fresh `maccabi-health login`. Details in [Live validation runs](https://github.com/orenyomtov/maccabi-health/blob/main/docs/research/LIVE-VALIDATION.md) and [Session lifetime research](https://github.com/orenyomtov/maccabi-health/blob/main/docs/research/SESSION-LIFETIME.md).
 
 The SDK builds a fresh server instance per HTTP request, so the `exclusive()` serializer cannot live inside that factory or it would serialize nothing. `startLocalHttpMcp` keeps a `Map<string, Executor>` for the lifetime of the handle and passes the matching executor in as `runExclusive`, so overlapping tool calls take turns instead of reading the same session file and clobbering each other's rotation. The key is the authenticated subject, so two members never queue behind each other. The map is cleared when the handle closes.
 
@@ -79,7 +81,7 @@ Refs are stateless. The same row mints the same token every time, nothing expire
 
 **Nothing to one analyte's history.** `maccabi_latest_labs` → the result carries a `ref` for the whole latest-results view, and each group lists its tests → `maccabi_detail` with that ref and any `group_values[].test_id`. Comparison reaches further back than the summary list. `maccabi_document` with the same pair and `variant: "comparison_graph"` gives the source's own graph PDF. `maccabi_followed_labs` works identically for followed tests.
 
-**Nothing to an imaging study's pixel data.** `maccabi_imaging_studies` → a row's `ref` → `maccabi_detail` returns the series and instances from the external viewer → `maccabi_detail` again with that ref plus a `series_instance_uid` and `sop_instance_uid` from the tree, for one image's DICOM metadata. The image bytes stop there on purpose: the preview JPEG and the raw pixel buffer are megabyte-scale binaries a model cannot use, so `maccabi imaging-thumbnail` and `maccabi imaging-pixels` write them to a file in the member's own terminal instead.
+**Nothing to an imaging study's pixel data.** `maccabi_imaging_studies` → a row's `ref` → `maccabi_detail` returns the series and instances from the external viewer → `maccabi_detail` again with that ref plus a `series_instance_uid` and `sop_instance_uid` from the tree, for one image's DICOM metadata. The image bytes stop there on purpose: the preview JPEG and the raw pixel buffer are megabyte-scale binaries a model cannot use, so `maccabi-health imaging-thumbnail` and `maccabi-health imaging-pixels` write them to a file in the member's own terminal instead.
 
 **Nothing to upcoming appointments.** `maccabi_upcoming_appointments` → a row's `ref` → `maccabi_detail` for the provider's contacts and the visit instructions. Instruction links are returned as validated HTTP(S) links and never fetched. Past visits are `maccabi_past_visits`, which is a different tool because it is a different question.
 
@@ -93,7 +95,7 @@ Cursor caps the agent at roughly 40 tools counted across every enabled MCP serve
 
 Two responses:
 
-- **In Cursor, use the CLI.** Cursor's agent has a shell, the CLI has no tool cap to hit, and bare `maccabi` is a ~5 KB index rather than ~33 KB of tool schemas. See [the CLI guide](CLI.md).
+- **In Cursor, use the CLI.** Cursor's agent has a shell, the CLI has no tool cap to hit, and bare `maccabi-health` is a ~5 KB index rather than ~33 KB of tool schemas. See [the CLI guide](CLI.md).
 - **Everywhere else, the count follows from the design.** The surface is already consolidated: one detail tool and one document tool cover every row-scoped read, and one account tool covers the member's own record, which is why 38 covers what would otherwise be well over a hundred endpoints. `maccabi_capabilities` exists so a client does not have to read all 38 descriptions to find its way.
 
 There is currently no flag to register a subset. If a client of yours needs one, [say so in an issue](https://github.com/orenyomtov/maccabi-health/issues).

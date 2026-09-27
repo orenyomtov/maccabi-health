@@ -2,7 +2,7 @@
 name: maccabi-health
 description: Reads the user's own Maccabi Healthcare records (labs, visits, prescriptions, referrals, imaging, and documents). Use when the user mentions Maccabi, מכבי, maccabi4u, their Israeli health-fund records, blood tests, lab results, or asks an agent to look at those records. Asks the user for their תעודת זהות and the SMS code.
 license: MIT
-compatibility: Prefer a global maccabi CLI when commands can run and the internet is reachable. Otherwise use the MCP server via npx.
+compatibility: Shell and internet. Use the maccabi-health CLI. ChatGPT Work, including cloud and mobile, Cowork, and Claude Code can. If this chat cannot, name Claude Code, ChatGPT Work, Grok Build, or the Antigravity CLI.
 metadata:
   version: "0.1.0"
 ---
@@ -11,74 +11,63 @@ metadata:
 
 Read the user's own Maccabi Healthcare records. Unofficial. Support read-only operations.
 
-Use the CLI when you can run shell commands and reach the internet. Each read is a short command you can script and even get the output as JSON. Use the MCP server only when you cannot run shell commands.
+Use the CLI when you can run shell commands and reach the internet. Each read is a short command you can script and even get the output as JSON. ChatGPT Work can do this in the cloud and on mobile, same as Cowork and Claude Code. Do not install MCP if you can run the CLI.
+
+## Which app
+
+If you cannot run the CLI, stop. Do not ask for their ID or the SMS code. Say one of these, and nothing else about install:
+
+| You are | Tell the user |
+| --- | --- |
+| Claude.ai or Claude Desktop chat | This chat can't access Maccabi. Use Claude Code or Claude Cowork. |
+| ChatGPT, and not ChatGPT Work | This chat can't access Maccabi. Use ChatGPT Work. |
+| grok.com or the Grok app | This chat can't access Maccabi. Use Grok Build or Cursor. |
+| gemini.google.com | This chat can't access Maccabi. Use Antigravity. |
+
+Claude Code, Cowork, Cursor, Codex, ChatGPT Work, Gemini CLI, Antigravity, and Grok Build run the CLI. That includes ChatGPT Work in the cloud and on mobile.
+
+`npx skills add orenyomtov/maccabi-health` installs this file for Claude Code, Codex, and Cursor.
 
 ## CLI
 
-Install once: `npm install -g maccabi-health`. Then every command is `maccabi ...`. If `maccabi` is not found, run `npx -y maccabi-health` with the same arguments.
+Install once: `npm install -g maccabi-health`. Then every command is `maccabi-health ...`. If `maccabi-health` is not found, run `npx -y maccabi-health` with the same arguments.
 
-Ask for their תעודת זהות and put those digits in the command. `000000000` is a placeholder. Do not send it.
+To login, ask for their תעודת זהות and put those digits in the command. `000000000` is the placeholder for their ID number. 
 
 ```sh
-maccabi login --id 000000000 --json --no-input
+maccabi-health login --id 000000000 --no-input
 ```
 
 `--id` and `--code` are separate commands. Never pass both at once. If several phones are registered, the command lists numbered choices and sends nothing. Ask which one, then repeat with `--phone N`.
 
-Ask for the code from the text. `000000` is a placeholder. Do not send it.
+Ask them for the code from the text send to their phone. `000000` is a placeholder for the code they received.
 
 ```sh
-maccabi login --code 000000 --json --no-input
+maccabi-health login --code 000000 --no-input
 ```
 
-One try per code. A wrong code ends that text. Do not submit it again. Ask if they want a new text and start over with `--id`. The code expires after ten minutes. A login lasts about an hour, then ask the same way again.
+One try per code. A wrong code ends that text. Do not submit it again. Ask if they want a new text and start over with `--id`. The code expires after ten minutes. After a successful login the session expires on its own after one hour, even if you keep using it. Then ask the same way again.
 
-`maccabi` lists the commands. `maccabi help` is the full reference, about 6,000 tokens:
+`maccabi-health` lists the commands. `maccabi-health help` is the full reference, about 6,000 tokens:
 
 ```text
-maccabi help COMMAND   usage, flags, notes and caveats for one command (add --json)
-maccabi help           every command in full (add --json for the discovery document)
+maccabi-health help COMMAND   usage, flags, notes and caveats for one command (add --json)
+maccabi-health help           every command in full (add --json for the discovery document)
 ```
 
-Add `--json --no-input` on every command except `mcp`.
+Add `--no-input` on every command except `mcp`. `--json` is only for `help` and `keep-alive`.
 
-Take those ids from that result. Do not invent one, and do not mix an id from one row with an id from another. `--limit` only shortens the result you already fetched. Before the first read, `maccabi status --verify --json --no-input` checks the login. Exit 3 means sign in again.
+Take those ids from that result. Do not invent one, and do not mix an id from one row with an id from another. `--limit` only shortens the result you already fetched. Before the first read, `maccabi-health status --verify --no-input` checks the login. Exit 3 means sign in again. The error on stderr is JSON, with `code` and `exitCode`.
 
 You can read labs and one test's past values, prescriptions, visits, referrals, doctor correspondence, vaccinations, certificates, billing summaries, imaging-study metadata, and the original PDFs the portal serves. Keep the original Hebrew unless the user asks for a translation. Summarize only what came back.
 
-Recent blood tests: `maccabi latest-labs --json --no-input`, then `maccabi help lab-comparison --json` and call it with a `test_id` from that result. `maccabi labs --limit 10 --json --no-input` is the longer list. PDF commands take `--out` and write a file. Do not fetch document URLs yourself.
+Recent blood tests: `maccabi-health latest-labs --no-input`, then `maccabi-health help lab-comparison --json` and call it with a `test_id` from that result. `maccabi-health labs --limit 10 --no-input` is the longer list. PDF commands take `--out` and write a file. Do not fetch document URLs yourself.
 
 ## MCP
 
+Use this only when the maccabi-health tools are already available and you cannot run a shell. Do not ask the user to install MCP. If the tools are not there, use the sentence in the table above.
+
 Same questions: תעודת זהות, then the code. `maccabi_login_start` sends the text. `maccabi_login_verify` finishes it. One try per code.
-
-If the mcp is not yet installed, install it first. If you cannot, ask the user to, and give them the command for their app.
-
-Claude Code needs the `--`. `--scope user` keeps it out of the project:
-
-```sh
-claude mcp add maccabi --scope user -- npx -y maccabi-health mcp
-```
-
-Codex:
-
-```sh
-codex mcp add maccabi -- npx -y maccabi-health mcp
-```
-
-Cursor has no install command. Merge this into `~/.cursor/mcp.json` without removing other servers:
-
-```json
-{
-  "mcpServers": {
-    "maccabi": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "maccabi-health", "mcp"]
-    }
-  }
-}
-```
 
 A list row carries a `ref`. `maccabi_detail` reads it, `maccabi_document` returns its PDF, and `next` already has the following arguments. Follow `next`. Do not combine a `ref` from one row with an id from another.
 

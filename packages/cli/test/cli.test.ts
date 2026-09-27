@@ -72,7 +72,7 @@ function fixture(initial: SavedLogin | null = saved, initialPending: PendingLogi
 
 describe("CLI dispatch", () => {
   test("offline help, focused discovery and version never access credentials or upstream", async () => {
-    for (const argv of [["help", "--json"], ["help", "labs", "--json"], ["labs", "--help", "--json"], ["version", "--json"], ["--version"], ["login", "-h"]]) {
+    for (const argv of [["help", "--json"], ["help", "labs", "--json"], ["labs", "--help", "--json"], ["version"], ["--version"], ["login", "-h"]]) {
       const f = fixture();
       expect(await runCli(argv, f.deps)).toBe(0);
       expect(f.calls).toEqual([]);
@@ -96,8 +96,8 @@ describe("CLI dispatch", () => {
     expect(printed.split(marker).length - 1).toBe(1);
     expect(printed).toContain("Topics (each applies to every command that names it above)");
     for (const command of ["imaging-study", "imaging-image", "imaging-thumbnail", "imaging-pixels"]) {
-      const block = printed.slice(printed.indexOf(`maccabi ${command} `));
-      expect(block.slice(0, block.indexOf("\n  maccabi "))).toContain("See also: imaging-viewer");
+      const block = printed.slice(printed.indexOf(`maccabi-health ${command} `));
+      expect(block.slice(0, block.indexOf("\n  maccabi-health "))).toContain("See also: imaging-viewer");
     }
     const json = fixture();
     expect(await runCli(["help", "imaging-pixels", "--json"], json.deps)).toBe(0);
@@ -109,9 +109,9 @@ describe("CLI dispatch", () => {
   });
 
   test("the bare invocation stays a small index and routes to the detail instead of printing it", async () => {
-    // Bare `maccabi` is the first thing an unprimed agent types. It used to print the whole catalog,
+    // Bare `maccabi-health` is the first thing an unprimed agent types. It used to print the whole catalog,
     // ~30 KB, which is more context than connecting the MCP server costs. If this cap ever fails,
-    // shorten the summaries - do not raise the number. The full catalog lives under `maccabi help`.
+    // shorten the summaries - do not raise the number. The full catalog lives under `maccabi-health help`.
     const LIMIT = 6_000;
     for (const argv of [[], ["--help"], ["-h"], ["--json"], ["--help", "--json"]]) {
       const f = fixture();
@@ -124,8 +124,8 @@ describe("CLI dispatch", () => {
     const text = fixture();
     expect(await runCli([], text.deps)).toBe(0);
     const printed = text.output();
-    expect(printed).toContain("maccabi help COMMAND");
-    expect(printed).toContain("maccabi login");
+    expect(printed).toContain("maccabi-health help COMMAND");
+    expect(printed).toContain("maccabi-health login");
     // Every command reachable from the full help is named here, so the index hides nothing.
     const full = fixture();
     expect(await runCli(["help", "--json"], full.deps)).toBe(0);
@@ -138,7 +138,7 @@ describe("CLI dispatch", () => {
     const machine = JSON.parse(json.output());
     expect(machine.commands.map((c: { name: string }) => c.name).sort()).toEqual([...names].sort());
     expect(machine.commands.every((c: { summary: string }) => c.summary.length > 0 && c.summary.length <= 48)).toBe(true);
-    expect(machine.detail).toContain("maccabi help COMMAND --json");
+    expect(machine.detail).toContain("maccabi-health help COMMAND --json");
     // The index is a router, not a reference: no command's usage string or caveats belong in it.
     expect(printed).not.toContain("--out FILE");
     expect(json.output()).not.toContain("eight-hop chain");
@@ -152,7 +152,7 @@ describe("CLI dispatch", () => {
     expect(await runCli(["help", "mcp", "--json"], focused.deps)).toBe(0);
     const mcp = JSON.parse(focused.output()).commands[0];
     expect(mcp.name).toBe("mcp");
-    expect(mcp.notes).toContain("maccabi login");
+    expect(mcp.notes).toContain("maccabi-health login");
     expect(mcp.notes).toContain("`--http` does not");
     expect(mcp.notes).not.toContain("authenticate separately");
     expect(focused.calls).toEqual([]);
@@ -172,18 +172,18 @@ describe("CLI dispatch", () => {
 
   test("missing session has actionable structured stderr and empty stdout, never prompts", async () => {
     const f = fixture(null);
-    expect(await runCli(["prescriptions", "--json", "--no-input"], f.deps)).toBe(3);
+    expect(await runCli(["prescriptions", "--no-input"], f.deps)).toBe(3);
     const reported = JSON.parse(f.error()).error;
     expect(reported).toMatchObject({ code: "AUTH_REQUIRED", exitCode: 3 });
-    expect(reported.message).toContain("maccabi login --id <id>");
-    expect(reported.message).toContain("maccabi login --code <code>");
+    expect(reported.message).toContain("maccabi-health login --id <id>");
+    expect(reported.message).toContain("maccabi-health login --code <code>");
     expect(f.output()).toBe("");
     expect(f.calls).toEqual(["load"]);
     expect(f.prompts).toEqual([]);
   });
 
-  test("usage errors in JSON mode do not echo invalid values", async () => {
-    for (const argv of [["labs", "--request", "synthetic-secret", "--json"], ["synthetic-secret", "--json"], ["login", "--otp", "synthetic-secret", "--json"]]) {
+  test("usage errors do not echo invalid values", async () => {
+    for (const argv of [["labs", "--request", "synthetic-secret"], ["synthetic-secret"], ["login", "--otp", "synthetic-secret"]]) {
       const f = fixture();
       expect(await runCli(argv, f.deps)).toBe(2);
       expect(JSON.parse(f.error()).error.code).toBe("INVALID_USAGE");
@@ -236,7 +236,7 @@ describe("CLI dispatch", () => {
     const source = { operation: "prescriptions", completeness: "upstream-response" };
     const records = [{ drug_name: "תרופה א", instructions: "טקסט מלא", extra: { untouched: true } }, { drug_name: "תרופה ב", instructions: "המשך" }, { drug_name: "תרופה ג" }];
     f.deps.connect = async () => ({ readers: { listPrescriptions: async () => ({ data: records, source }), currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["prescriptions", "--limit", "1", "--offset", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["prescriptions", "--limit", "1", "--offset", "1"], f.deps)).toBe(0);
     const result = JSON.parse(f.output());
     expect(result.data).toEqual([records[1]]);
     expect(result.source).toEqual(source);
@@ -248,7 +248,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const result = { data: { categories: [{ code: "synthetic" }], tests: [{ doc_id: "a" }, { doc_id: "b" }] }, source: { completeness: "local-filtered-subset", selection: { mode: "local", field: "execute_date", year: 2025 } } };
     f.deps.connect = async () => ({ readers: { listTests: async () => result, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["labs", "--year", "2025", "--limit", "1", "--offset", "10", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["labs", "--year", "2025", "--limit", "1", "--offset", "10"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual({ categories: result.data.categories, tests: [] });
     expect(JSON.parse(f.output()).source).toEqual(result.source);
     expect(JSON.parse(f.output()).page.hasMoreInResponse).toBe(false);
@@ -264,7 +264,7 @@ describe("CLI dispatch", () => {
     };
     const result = { data: { categories: [], tests: [row] }, source: { operation: "tests" } };
     f.deps.connect = async () => ({ readers: { listTests: async () => result, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["labs", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["labs"], f.deps)).toBe(0);
     const printed = f.output();
     for (const omitted of ["result_files", "result_file", "pdf_link", "member_id", "hash", "synthetic/attachment/path", "synthetic/private/link", "synthetic-signature"]) expect(printed).not.toContain(omitted);
     expect(JSON.parse(printed).data.tests).toEqual([{ request_id: row.request_id, doc_id: row.doc_id, type: row.type, has_document: true, test_name: row.test_name }]);
@@ -274,7 +274,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const groups = [{ vaccine_group_code: 1, vaccinations_amount: 2, vaccine_group_name: "חיסון סינתטי", first_date: "2020-01-01", last_date: "2025-01-01", timestamp: "synthetic-timestamp" }];
     f.deps.connect = async () => ({ readers: { listVaccinationGroups: async () => ({ data: groups, source: { operation: "vaccination-groups" } }), currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["vaccinations", "--limit", "1", "--json", "--no-input"], f.deps)).toBe(0);
+    expect(await runCli(["vaccinations", "--limit", "1", "--no-input"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual(groups);
     expect(JSON.parse(f.output()).source.operation).toBe("vaccination-groups");
     expect(JSON.parse(f.output()).page.upstreamTotalKnown).toBe(false);
@@ -285,7 +285,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const result = { data: [], source: { operation: "sensitivities", completeness: "upstream-response" } };
     f.deps.connect = async () => ({ readers: { listSensitivities: async () => result, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["sensitivities", "--json", "--no-input"], f.deps)).toBe(0);
+    expect(await runCli(["sensitivities", "--no-input"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(result);
     expect(f.error()).toBe("");
     expect(f.prompts).toEqual([]);
@@ -294,7 +294,7 @@ describe("CLI dispatch", () => {
   test("unknown sensitivity shapes report an explicit failure rather than an empty list", async () => {
     const f = fixture();
     f.deps.connect = async () => ({ readers: { listSensitivities: async () => { throw new ReadOperationError("UNSUPPORTED_FLOW", "sensitivities"); }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["sensitivities", "--json"], f.deps)).toBe(1);
+    expect(await runCli(["sensitivities"], f.deps)).toBe(1);
     expect(JSON.parse(f.error()).error.code).toBe("UNSUPPORTED_FLOW");
     expect(f.output()).toBe("");
     expect(f.stored()).toEqual(saved);
@@ -304,7 +304,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const result = { data: [{ registration_date: "2025-01-01", sensitivity: "רגישות סינתטית", practitioner_name: "דוגמה", speciality: null, sensitivity_presentation: "תיאור מקורי", classification: 1 }], source: { operation: "sensitivities", completeness: "upstream-response", schemaEvidence: "frontend-field-projection" } };
     f.deps.connect = async () => ({ readers: { listSensitivities: async () => result, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["sensitivities", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["sensitivities"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(result);
     expect(f.error()).toBe("");
   });
@@ -312,7 +312,7 @@ describe("CLI dispatch", () => {
   test("vaccination PDF uses the private file adapter and never emits bytes to stdout", async () => {
     const f = fixture();
     f.deps.connect = async () => ({ readers: { getVaccinationCertificatePdf: async () => ({ data: new TextEncoder().encode("%PDF-synthetic") }), currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["vaccination-pdf", "--out", "synthetic-certificate.pdf", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["vaccination-pdf", "--out", "synthetic-certificate.pdf"], f.deps)).toBe(0);
     expect(f.calls).toContain("save-pdf");
     expect(JSON.parse(f.output())).toEqual({ status: "saved", bytes: 14 });
     expect(f.output()).not.toContain("%PDF");
@@ -321,7 +321,7 @@ describe("CLI dispatch", () => {
   test("English summary preserves original PDF bytes without any identity-update operation", async () => {
     const f = fixture();
     f.deps.connect = async () => ({ readers: { getEnglishMedicalSummaryPdf: async () => { f.calls.push("english-summary-pdf"); return { data: new TextEncoder().encode("%PDF-synthetic") }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["english-summary-pdf", "--out", "synthetic-summary.pdf", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["english-summary-pdf", "--out", "synthetic-summary.pdf"], f.deps)).toBe(0);
     expect(f.calls).toEqual(["load", "english-summary-pdf", "save-pdf", "save"]);
     expect(JSON.parse(f.output())).toEqual({ status: "saved", bytes: 14 });
     expect(f.output()).not.toContain("%PDF");
@@ -330,7 +330,7 @@ describe("CLI dispatch", () => {
   test("purchased-medication PDF uses the observed report reader and preserves bytes", async () => {
     const f = fixture();
     f.deps.connect = async () => ({ readers: { getMedicationReportPdf: async () => { f.calls.push("medication-report-pdf"); return { data: new TextEncoder().encode("%PDF-synthetic") }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["medication-report-pdf", "--out", "synthetic-medications.pdf", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["medication-report-pdf", "--out", "synthetic-medications.pdf"], f.deps)).toBe(0);
     expect(f.calls).toEqual(["load", "medication-report-pdf", "save-pdf", "save"]);
     expect(JSON.parse(f.output())).toEqual({ status: "saved", bytes: 14 });
     expect(f.output()).not.toContain("%PDF");
@@ -341,7 +341,7 @@ describe("CLI dispatch", () => {
     const range = { from: "2026-01-01", to: "2026-12-31" };
     const rows = [{ reference: "a".repeat(64), title_name: "אישור סינתטי", practitioner_full_name: "דוגמה", specialization_description: "מקור", approval_date: "2026-01-02", approval_date_from: "2026-01-02", approval_date_to: "2026-01-03", approval_type_code: "synthetic" }];
     f.deps.connect = async () => ({ readers: { listCertificates: async (selectedRange: unknown) => { expect(selectedRange).toEqual(range); return { data: rows, source: { operation: "certificates" } }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["certificates", "--from", range.from, "--to", range.to, "--limit", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["certificates", "--from", range.from, "--to", range.to, "--limit", "1"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual(rows);
     expect(JSON.parse(f.output()).page.upstreamTotalKnown).toBe(false);
   });
@@ -352,11 +352,11 @@ describe("CLI dispatch", () => {
     for (const period of [undefined, periods[1]!.value]) {
       const f = fixture();
       f.deps.connect = async () => ({ readers: { listQuarterlyBillingReports: async (requested: unknown) => { expect(requested).toBe(period); return original; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-      expect(await runCli(["billing-reports", ...(period ? ["--period", period] : []), "--json"], f.deps)).toBe(0);
+      expect(await runCli(["billing-reports", ...(period ? ["--period", period] : [])], f.deps)).toBe(0);
       expect(JSON.parse(f.output())).toEqual(original);
     }
     const invalid = fixture();
-    expect(await runCli(["billing-reports", "--period", "synthetic", "--limit", "1", "--json"], invalid.deps)).toBe(2);
+    expect(await runCli(["billing-reports", "--period", "synthetic", "--limit", "1"], invalid.deps)).toBe(2);
     expect(invalid.calls).toEqual([]);
   });
 
@@ -364,7 +364,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const original = { data: { renewed: true }, source: { service: "MainAppAPI", operation: "session-renewal" } };
     f.deps.connect = async () => ({ readers: { renewSession: async () => { f.calls.push("renew"); return original; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["renew-session", "--json", "--no-input"], f.deps)).toBe(0);
+    expect(await runCli(["renew-session", "--no-input"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(original);
     expect(f.calls).toEqual(["load", "renew", "save"]);
     expect(f.prompts).toEqual([]);
@@ -380,12 +380,12 @@ describe("CLI dispatch", () => {
       const f = fixture();
       const original = { data, source: { operation: method, schemaEvidence: "frontend-field-projection" } };
       f.deps.connect = async () => ({ readers: { [method]: async (...args: unknown[]) => { expect(args).toEqual(expected); return original; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-      expect(await runCli([...argv, "--json"], f.deps)).toBe(0);
+      expect(await runCli([...argv], f.deps)).toBe(0);
       expect(JSON.parse(f.output())).toEqual(original);
     }
     for (const argv of [["prescription-alternatives"], ["administrative-requests", "--id", "synthetic", "--limit", "1"], ["administrative-request-pdf", "--id", "synthetic", "--reference", "malformed", "--out", "synthetic.pdf"], ["nursing-insurance-report-pdf", "--reference", "malformed", "--out", "synthetic.pdf"], ["nursing-insurance-reports", "--period", "2025"], ["lab-report-pdf", "--request", "r", "--doc", "d"]]) {
       const f = fixture();
-      expect(await runCli([...argv, "--json"], f.deps)).toBe(2); expect(f.calls).toEqual([]);
+      expect(await runCli([...argv], f.deps)).toBe(2); expect(f.calls).toEqual([]);
     }
   });
 
@@ -459,7 +459,7 @@ describe("CLI dispatch", () => {
     for (const item of cases) {
       const f = fixture();
       f.deps.connect = async () => ({ readers: { [item.method]: async (...args: unknown[]) => { expect(args).toEqual(item.expected); return { data: new TextEncoder().encode("%PDF-synthetic") }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-      expect(await runCli([item.command, ...item.flags, "--out", "synthetic.pdf", "--json"], f.deps)).toBe(0);
+      expect(await runCli([item.command, ...item.flags, "--out", "synthetic.pdf"], f.deps)).toBe(0);
       expect(f.calls).toContain("save-pdf");
       expect(JSON.parse(f.output())).toEqual({ status: "saved", bytes: 14 });
       expect(f.output()).not.toContain("%PDF");
@@ -469,7 +469,7 @@ describe("CLI dispatch", () => {
   test("hospital PDF forwards only the owner-list reference and same as-of date to private output", async () => {
     const f = fixture();
     f.deps.connect = async () => ({ readers: { getHospitalReportPdf: async (reference: string, asOf: string) => { expect(reference).toBe("a".repeat(64)); expect(asOf).toBe("2026-09-20"); return { data: new TextEncoder().encode("%PDF-synthetic") }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["hospital-pdf", "--reference", "a".repeat(64), "--as-of", "2026-09-20", "--out", "synthetic-hospital.pdf", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["hospital-pdf", "--reference", "a".repeat(64), "--as-of", "2026-09-20", "--out", "synthetic-hospital.pdf"], f.deps)).toBe(0);
     expect(f.calls).toContain("save-pdf");
     expect(JSON.parse(f.output())).toEqual({ status: "saved", bytes: 14 });
     expect(f.output()).not.toContain("%PDF");
@@ -480,11 +480,11 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const data = { drugs: [{ pdf_reference: reference, drug_name: "תרופה סינתטית" }] };
     f.deps.connect = async () => ({ readers: { getVisit: async () => ({ data }), currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["visits", "--id", "synthetic-visit", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["visits", "--id", "synthetic-visit"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual(data);
     for (const flags of [["--reference", "malformed"], [], ["--reference", reference, "--path", "/never-used"]]) {
       const invalid = fixture();
-      expect(await runCli(["visit-document-pdf", "--id", "synthetic-visit", ...flags, "--out", "synthetic.pdf", "--json"], invalid.deps)).toBe(2);
+      expect(await runCli(["visit-document-pdf", "--id", "synthetic-visit", ...flags, "--out", "synthetic.pdf"], invalid.deps)).toBe(2);
       expect(invalid.calls).toEqual([]);
       expect(invalid.output()).toBe("");
     }
@@ -495,14 +495,14 @@ describe("CLI dispatch", () => {
     const groups = [{ group_name: "מקור", group_values: [{ test_id: "synthetic-test", message: "טקסט מקור", units: "mmol/L", result: 4.25 }] }, { group_name: "נוסף", group_values: [] }];
     const comparison = { current_result: groups[0]!.group_values[0], other_results: [] };
     f.deps.connect = async () => ({ readers: { listLatestLabResults: async () => ({ data: groups }), getLabComparison: async (...ids: unknown[]) => { expect(ids).toEqual([{ source: "result", requestId: "synthetic-request", docId: "synthetic-doc", testId: "synthetic-test" }]); return { data: comparison }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["latest-labs", "--limit", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["latest-labs", "--limit", "1"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual([groups[0]]);
     const detail = fixture(); detail.deps.connect = f.deps.connect;
-    expect(await runCli(["lab-comparison", "--source", "result", "--request", "synthetic-request", "--doc", "synthetic-doc", "--test", "synthetic-test", "--json"], detail.deps)).toBe(0);
+    expect(await runCli(["lab-comparison", "--source", "result", "--request", "synthetic-request", "--doc", "synthetic-doc", "--test", "synthetic-test"], detail.deps)).toBe(0);
     expect(JSON.parse(detail.output()).data).toEqual(comparison);
     for (const args of [["lab-comparison"], ["lab-comparison-pdf", "--out", "synthetic.pdf"], ["latest-labs-pdf"], ["latest-labs", "--owner", "forbidden"], ["lab-comparison", "--request", "r", "--doc", "d", "--test", "t", "--date", "2026-01-01"]]) {
       const invalid = fixture();
-      expect(await runCli([...args, "--json"], invalid.deps)).toBe(2);
+      expect(await runCli([...args], invalid.deps)).toBe(2);
       expect(invalid.calls).toEqual([]);
     }
   });
@@ -513,10 +513,10 @@ describe("CLI dispatch", () => {
         const f = fixture();
         const pdf = command!.endsWith("-pdf");
         f.deps.connect = async () => ({ readers: { [method!]: async (selection: unknown) => { expect(selection).toEqual({ source, testId: "synthetic-test" }); return { data: pdf ? new TextEncoder().encode("%PDF-synthetic") : { current_result: {}, other_results: [] } }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-        expect(await runCli([command!, "--source", source, "--test", "synthetic-test", ...(pdf ? ["--out", "synthetic.pdf"] : []), "--json"], f.deps)).toBe(0);
+        expect(await runCli([command!, "--source", source, "--test", "synthetic-test", ...(pdf ? ["--out", "synthetic.pdf"] : [])], f.deps)).toBe(0);
       }
       const invalid = fixture();
-      expect(await runCli(["lab-comparison", "--source", source, "--test", "synthetic-test", "--request", "forbidden", "--doc", "forbidden", "--json"], invalid.deps)).toBe(2);
+      expect(await runCli(["lab-comparison", "--source", source, "--test", "synthetic-test", "--request", "forbidden", "--doc", "forbidden"], invalid.deps)).toBe(2);
       expect(invalid.calls).toEqual([]);
     }
   });
@@ -525,12 +525,12 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const rows = [{ doc_id: "synthetic", drug_name: "מקור" }, { doc_id: "second" }];
     f.deps.connect = async () => ({ readers: { listPrescriptions: async (options: unknown) => { expect(options).toEqual({ status: "history", permanent: false }); return { data: rows, source: { completeness: "local-filtered-subset" } }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["prescriptions", "--status", "history", "--permanent", "false", "--limit", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["prescriptions", "--status", "history", "--permanent", "false", "--limit", "1"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual([rows[0]]);
     expect(JSON.parse(f.output()).source.completeness).toBe("local-filtered-subset");
     for (const flags of [["--status", "invented"], ["--permanent", "yes"], ["--permanent"]]) {
       const invalid = fixture();
-      expect(await runCli(["prescriptions", ...flags, "--json"], invalid.deps)).toBe(2);
+      expect(await runCli(["prescriptions", ...flags], invalid.deps)).toBe(2);
       expect(invalid.calls).toEqual([]);
     }
   });
@@ -539,11 +539,11 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const original = { data: { followed_counter: 1, followed_tests: [{ test_id: "synthetic-test", is_follow: true }], options: [{ test_id: 1, test_desc: "מקור", is_follow: false }] }, source: { schemaEvidence: "frontend-field-projection" } };
     f.deps.connect = async () => ({ readers: { listFollowedLabResults: async () => original, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["followed-labs", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["followed-labs"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(original);
     for (const args of [["followed-labs", "--follow", "true"], ["followed-labs-pdf"], ["followed-labs", "--limit", "1"]]) {
       const invalid = fixture();
-      expect(await runCli([...args, "--json"], invalid.deps)).toBe(2);
+      expect(await runCli([...args], invalid.deps)).toBe(2);
       expect(invalid.calls).toEqual([]);
     }
   });
@@ -553,7 +553,7 @@ describe("CLI dispatch", () => {
     const rows = [{ date: "2026-10-01T10:00:00", provider_name: "שם סינתטי", provider_service_type: "מקור", description: "טקסט מקורי 123456789", waiting_list_status: null }, { date: "2026-10-02T10:00:00" }];
     const source = { operation: "future-appointments", schemaEvidence: "frontend-field-projection" };
     f.deps.connect = async () => ({ readers: { listFutureAppointments: async () => ({ data: rows, source }), currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["appointments", "--limit", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["appointments", "--limit", "1"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual([rows[0]]);
     expect(JSON.parse(f.output()).source).toEqual(source);
     expect(JSON.parse(f.output()).page.upstreamTotalKnown).toBe(false);
@@ -564,11 +564,11 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const original = { data: { appointment: { date: "2026-10-01T10:00:00" }, provider: { address: "כתובת סינתטית", phone: null }, instructions: [{ description: "הוראה מקורית", link: "https://example.invalid/instructions" }] }, source: { schemaEvidence: "frontend-field-projection" } };
     f.deps.connect = async () => ({ readers: { getFutureAppointment: async (value: string) => { expect(value).toBe(reference); return original; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["appointments", "--reference", reference, "--json"], f.deps)).toBe(0);
+    expect(await runCli(["appointments", "--reference", reference], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(original);
     for (const flags of [["--reference", "malformed"], ["--reference", reference, "--limit", "1"], ["--reference", reference, "--owner", "forbidden"]]) {
       const invalid = fixture();
-      expect(await runCli(["appointments", ...flags, "--json"], invalid.deps)).toBe(2);
+      expect(await runCli(["appointments", ...flags], invalid.deps)).toBe(2);
       expect(invalid.calls).toEqual([]);
     }
   });
@@ -578,7 +578,7 @@ describe("CLI dispatch", () => {
     const rows = [{ vaccination_date: "2026-01-02", vaccination_place: null, remark: "טקסט מקור 123456789" }, { vaccination_date: "2026-02-02" }];
     const source = { operation: "vaccination-doses", schemaEvidence: "frontend-field-projection" };
     f.deps.connect = async () => ({ readers: { getVaccinationDoses: async (code: number) => { expect(code).toBe(7); return { data: rows, source }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["vaccinations", "--group", "7", "--limit", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["vaccinations", "--group", "7", "--limit", "1"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual([rows[0]]);
     expect(JSON.parse(f.output()).source).toEqual(source);
     expect(JSON.parse(f.output()).page.upstreamTotalKnown).toBe(false);
@@ -590,11 +590,11 @@ describe("CLI dispatch", () => {
     for (const [command, method, original] of [["notification-preferences", "getNotificationPreferences", preferences], ["account-access", "listAccountAccess", access]] as const) {
       const f = fixture();
       f.deps.connect = async () => ({ readers: { [method]: async (...args: unknown[]) => { expect(args).toEqual([]); return original; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-      expect(await runCli([command, "--json"], f.deps)).toBe(0);
+      expect(await runCli([command], f.deps)).toBe(0);
       expect(JSON.parse(f.output())).toEqual(original);
       for (const flag of ["--owner", "--save", "--grant", "--limit"]) {
         const invalid = fixture();
-        expect(await runCli([command, flag, "1", "--json"], invalid.deps)).toBe(2);
+        expect(await runCli([command, flag, "1"], invalid.deps)).toBe(2);
         expect(invalid.calls).toEqual([]);
       }
     }
@@ -604,7 +604,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const original = { data: { email: "example@example.invalid", phones_update_date: "2026-01-02", phones: [{ phone_type: "home", phone_prefix: "00", phone_no: 1234, fax_special_prefix: "" }], addresses: [{ city_name: "עיר סינתטית", street_name: "רחוב סינתטי", house_num: "1", apartment_num: "2" }] }, source: { service: "TokenServerAPI", operation: "contact-profile" } };
     f.deps.connect = async () => ({ readers: { getOwnerContactProfile: () => original, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["contact-profile", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["contact-profile"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(original);
     expect(f.error()).toBe("");
   });
@@ -614,7 +614,7 @@ describe("CLI dispatch", () => {
     const rows = ["א", "ב"].map(letter_desc => ({ letter_type: 1, letter_desc, item_date: "2026-01-02", original_item_date: "2026-01-01" }));
     const source = { service: "DirectorshipAPI", operation: "notifications" };
     f.deps.connect = async () => ({ readers: { listNotifications: async (selectedRange: unknown) => { expect(selectedRange).toEqual({ from: "2026-01-01", to: "2026-12-31" }); return { data: rows, source }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["notifications", "--from", "2026-01-01", "--to", "2026-12-31", "--limit", "1", "--offset", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["notifications", "--from", "2026-01-01", "--to", "2026-12-31", "--limit", "1", "--offset", "1"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual([rows[1]]);
     expect(JSON.parse(f.output()).source).toEqual(source);
     expect(JSON.parse(f.output()).page.upstreamTotalKnown).toBe(false);
@@ -628,7 +628,7 @@ describe("CLI dispatch", () => {
     ];
     const original = { data: rows, source: { operation: "notifications", schemaEvidence: "frontend-field-projection" } };
     f.deps.connect = async () => ({ readers: { listNotifications: async () => original, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["notifications", "--from", "2026-01-01", "--to", "2026-12-31", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["notifications", "--from", "2026-01-01", "--to", "2026-12-31"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(original);
     expect(JSON.parse(f.output()).data[0].reference).toBe("b".repeat(64));
   });
@@ -643,7 +643,7 @@ describe("CLI dispatch", () => {
       const f = fixture();
       const original = { data, source: { service: "LegacyMedicalFile", operation: command, completeness: "upstream-response" } };
       f.deps.connect = async () => ({ readers: { [method]: async () => original, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-      expect(await runCli([command, "--json", "--no-input"], f.deps)).toBe(0);
+      expect(await runCli([command, "--no-input"], f.deps)).toBe(0);
       expect(JSON.parse(f.output())).toEqual(original);
       expect(f.prompts).toEqual([]);
     }
@@ -655,10 +655,10 @@ describe("CLI dispatch", () => {
       const f = fixture();
       const method = pdf ? "getHospitalReportPdf" : "listHospitalHistory";
       f.deps.connect = async () => ({ readers: { [method]: async (...args: unknown[]) => { expect(args).toEqual(pdf ? ["a".repeat(64), "2026-09-20", selected] : ["2026-09-20", selected]); return { data: pdf ? new TextEncoder().encode("%PDF-synthetic") : [] }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-      expect(await runCli([pdf ? "hospital-pdf" : "hospital-history", "--as-of", "2026-09-20", "--from", selected.from, "--to", selected.to, ...(pdf ? ["--reference", "a".repeat(64), "--out", "synthetic.pdf"] : []), "--json"], f.deps)).toBe(0);
+      expect(await runCli([pdf ? "hospital-pdf" : "hospital-history", "--as-of", "2026-09-20", "--from", selected.from, "--to", selected.to, ...(pdf ? ["--reference", "a".repeat(64), "--out", "synthetic.pdf"] : [])], f.deps)).toBe(0);
     }
     for (const flags of [["--from", selected.from], ["--from", selected.to, "--to", selected.from], ["--from", selected.from, "--to", "2026-10-01"]]) {
-      const f = fixture(); expect(await runCli(["hospital-history", "--as-of", "2026-09-20", ...flags, "--json"], f.deps)).toBe(2); expect(f.calls).toEqual([]);
+      const f = fixture(); expect(await runCli(["hospital-history", "--as-of", "2026-09-20", ...flags], f.deps)).toBe(2); expect(f.calls).toEqual([]);
     }
   });
 
@@ -667,7 +667,7 @@ describe("CLI dispatch", () => {
     const rows = ["א", "ב"].map(NameHospital => ({ NameHospital, DateHospitalization: "2026-01-02", Date: "מקור", DurationHospitalization: "1", QuantityTreatments: "1", TypeCommitment: "מקור", Department: "דוגמה", HasLink: false, DescriptionTreatment: [{ Description: "טקסט קליני" }], DescriptionDistinction: [] }));
     const source = { service: "LegacyHospitalMailings", operation: "hospital-history" };
     f.deps.connect = async () => ({ readers: { listHospitalHistory: async (asOf: string) => { expect(asOf).toBe("2026-09-20"); return { data: rows, source }; }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["hospital-history", "--as-of", "2026-09-20", "--limit", "1", "--offset", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["hospital-history", "--as-of", "2026-09-20", "--limit", "1", "--offset", "1"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual([rows[1]]);
     expect(JSON.parse(f.output()).source).toEqual(source);
     expect(JSON.parse(f.output()).page.upstreamTotalKnown).toBe(false);
@@ -680,7 +680,7 @@ describe("CLI dispatch", () => {
     f.deps.connect = async () => ({ readers: { listAdditionalInformation: async (selectedRange: unknown) => {
       expect(selectedRange).toEqual({ from: "2026-01-01", to: "2026-12-31" }); return { data: rows, source };
     }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["additional-information", "--from", "2026-01-01", "--to", "2026-12-31", "--limit", "1", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["additional-information", "--from", "2026-01-01", "--to", "2026-12-31", "--limit", "1"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual(rows);
     expect(JSON.parse(f.output()).source).toEqual(source);
     expect(JSON.parse(f.output()).page.upstreamTotalKnown).toBe(false);
@@ -693,7 +693,7 @@ describe("CLI dispatch", () => {
       expect(range).toEqual({ from: "2026-01-01", to: "2026-12-31" });
       return { data: new TextEncoder().encode("%PDF-synthetic") };
     }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["certificate-pdf", "--reference", "a".repeat(64), "--from", "2026-01-01", "--to", "2026-12-31", "--out", "synthetic-certificate.pdf", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["certificate-pdf", "--reference", "a".repeat(64), "--from", "2026-01-01", "--to", "2026-12-31", "--out", "synthetic-certificate.pdf"], f.deps)).toBe(0);
     expect(f.calls).toContain("save-pdf");
     expect(JSON.parse(f.output())).toEqual({ status: "saved", bytes: 14 });
   });
@@ -704,7 +704,7 @@ describe("CLI dispatch", () => {
       expect([request, doc]).toEqual(["synthetic-request", "synthetic-doc"]);
       return { data: new TextEncoder().encode("%PDF-synthetic") };
     }, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["imaging-pdf", "--request", "synthetic-request", "--doc", "synthetic-doc", "--out", "synthetic-imaging.pdf", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["imaging-pdf", "--request", "synthetic-request", "--doc", "synthetic-doc", "--out", "synthetic-imaging.pdf"], f.deps)).toBe(0);
     expect(f.calls).toContain("save-pdf");
     expect(JSON.parse(f.output())).toEqual({ status: "saved", bytes: 14 });
   });
@@ -713,7 +713,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const result = { data: [], source: { operation: "administrative-requests", completeness: "upstream-response", schemaEvidence: "frontend-field-projection" } };
     f.deps.connect = async () => ({ readers: { listAdministrativeRequests: async () => result, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["administrative-requests", "--limit", "20", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["administrative-requests", "--limit", "20"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data).toEqual([]);
     expect(JSON.parse(f.output()).source).toEqual(result.source);
     expect(JSON.parse(f.output()).page.availableInResponse).toBe(0);
@@ -724,7 +724,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const result = { data: { kupa_debt: 12, shaban_debt: 3, additional_charges_debt: 0 }, source: { operation: "outstanding-debt", scope: "payer-account-aggregate" } };
     f.deps.connect = async () => ({ readers: { getOutstandingDebt: async () => result, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["billing-totals", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["billing-totals"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(result);
     expect(f.error()).toBe("");
   });
@@ -733,7 +733,7 @@ describe("CLI dispatch", () => {
     const f = fixture();
     const result = { data: { payment_method: 1, is_active_auth_exists: true, bank_name: "בנק סינתטי", last_four_digits_credit_card: "1234" }, source: { operation: "payment-methods" } };
     f.deps.connect = async () => ({ readers: { getPaymentMethods: async () => result, currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
-    expect(await runCli(["payment-methods", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["payment-methods"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual(result);
     expect(f.error()).toBe("");
   });
@@ -748,7 +748,7 @@ describe("CLI dispatch", () => {
         getInquiry: async (id: string) => { expect(id).toBe("synthetic-request"); f.calls.push("inquiry-detail"); return detailResult; },
         currentOwner: owner,
       } as unknown as Connected["readers"], exportSession: async () => session });
-      expect(await runCli(detail ? ["inquiries", "--id", "synthetic-request", "--json"] : ["inquiries", "--limit", "1", "--json"], f.deps)).toBe(0);
+      expect(await runCli(detail ? ["inquiries", "--id", "synthetic-request"] : ["inquiries", "--limit", "1"], f.deps)).toBe(0);
       expect(JSON.parse(f.output()).data).toEqual((detail ? detailResult : listResult).data);
       expect(f.calls).toContain(detail ? "inquiry-detail" : "inquiry-list");
       expect(f.calls).not.toContain(detail ? "inquiry-list" : "inquiry-detail");
@@ -784,7 +784,7 @@ describe("CLI dispatch", () => {
 
   test("--id sends one SMS to the only usable number and persists the challenge, never echoing the ID", async () => {
     const f = fixture(null);
-    expect(await runCli(["login", "--id", "012345678", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["login", "--id", "012345678"], f.deps)).toBe(0);
     expect(f.calls).toEqual(["load", "begin", "send-sms", "export-pending", "save-pending"]);
     expect(f.smsPhones).toEqual([0]);
     expect(JSON.parse(f.output())).toEqual({ status: "sms-sent", phone: "ending 12", expiresInSeconds: expect.any(Number) });
@@ -797,7 +797,7 @@ describe("CLI dispatch", () => {
   test("several SMS numbers are listed for an explicit choice and nothing is sent", async () => {
     const f = fixture(null);
     f.phones.push({ index: 2, label: "Phone ending 34", display: "ending 34", smsAvailable: true }, { index: 3, label: "Landline", display: "Landline", smsAvailable: false });
-    expect(await runCli(["login", "--id", "012345678", "--json"], f.deps)).toBe(3);
+    expect(await runCli(["login", "--id", "012345678"], f.deps)).toBe(3);
     expect(f.calls).toEqual(["load", "begin", "export-pending", "save-pending"]);
     expect(JSON.parse(f.output())).toEqual({ status: "phone-required", phones: [{ option: 1, label: "Phone ending 12" }, { option: 3, label: "Phone ending 34" }], expiresInSeconds: expect.any(Number) });
     expect(f.pending()).not.toBeNull();
@@ -806,14 +806,14 @@ describe("CLI dispatch", () => {
   test("--phone selects the listed option and the upstream index it came from", async () => {
     const f = fixture(null);
     f.phones.push({ index: 2, label: "Phone ending 34", display: "ending 34", smsAvailable: true });
-    expect(await runCli(["login", "--id", "012345678", "--phone", "3", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["login", "--id", "012345678", "--phone", "3"], f.deps)).toBe(0);
     expect(f.smsPhones).toEqual([2]);
     expect(JSON.parse(f.output())).toMatchObject({ status: "sms-sent", phone: "ending 34" });
   });
 
   test("--code finishes the persisted challenge, binds its owner and clears the pending file", async () => {
     const f = fixture(null, challenge());
-    expect(await runCli(["login", "--code", "123456", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["login", "--code", "123456"], f.deps)).toBe(0);
     expect(f.calls).toEqual(["load-pending", "restore-pending", "verify-otp", "connect", "save", "delete-pending", "stop-keep-alive", "keep-alive"]);
     expect(JSON.parse(f.output())).toEqual({ status: "signed-in", persistence: "session-file", keepAlive: "started" });
     expect(f.stored()?.owner).toEqual(owner);
@@ -823,7 +823,7 @@ describe("CLI dispatch", () => {
 
   test("--no-keep-alive finishes the login without starting or stopping a renewal", async () => {
     const f = fixture(null, challenge());
-    expect(await runCli(["login", "--code", "123456", "--no-keep-alive", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["login", "--code", "123456", "--no-keep-alive"], f.deps)).toBe(0);
     expect(f.calls).not.toContain("keep-alive");
     expect(f.calls).not.toContain("stop-keep-alive");
     expect(JSON.parse(f.output()).keepAlive).toBe("disabled");
@@ -842,7 +842,7 @@ describe("CLI dispatch", () => {
 
   test("a code with no started login is refused before any upstream call", async () => {
     const f = fixture(null);
-    expect(await runCli(["login", "--code", "123456", "--json"], f.deps)).toBe(3);
+    expect(await runCli(["login", "--code", "123456"], f.deps)).toBe(3);
     expect(f.calls).toEqual(["load-pending"]);
     expect(JSON.parse(f.error()).error.code).toBe("NO_PENDING_LOGIN");
     expect(f.output()).toBe("");
@@ -851,36 +851,36 @@ describe("CLI dispatch", () => {
   test("MACCABI_ID and MACCABI_OTP stand in for the flags, which win when both are present", async () => {
     const f = fixture(null);
     f.deps.env = { MACCABI_ID: "012345678" };
-    expect(await runCli(["login", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["login"], f.deps)).toBe(0);
     expect(f.calls).toContain("send-sms");
 
     const g = fixture(null, challenge());
     g.deps.env = { MACCABI_OTP: "999999" };
-    expect(await runCli(["login", "--code", "123456", "--json"], g.deps)).toBe(0);
+    expect(await runCli(["login", "--code", "123456"], g.deps)).toBe(0);
     expect(g.calls).toContain("verify-otp");
 
     const h = fixture(null);
     h.deps.env = { MACCABI_ID: "012345678", MACCABI_OTP: "123456" };
-    expect(await runCli(["login", "--json"], h.deps)).toBe(2);
+    expect(await runCli(["login"], h.deps)).toBe(2);
     expect(h.calls).toEqual([]);
   });
 
   test("login --status reports signed-out, a waiting challenge and a saved session without upstream calls", async () => {
     const out = fixture(null);
-    expect(await runCli(["login", "--status", "--json"], out.deps)).toBe(0);
+    expect(await runCli(["login", "--status"], out.deps)).toBe(0);
     expect(JSON.parse(out.output())).toEqual({ status: "signed-out" });
     expect(out.calls).toEqual(["load", "load-pending"]);
 
     const waiting = fixture(null, challenge());
-    expect(await runCli(["login", "--status", "--json"], waiting.deps)).toBe(0);
+    expect(await runCli(["login", "--status"], waiting.deps)).toBe(0);
     expect(JSON.parse(waiting.output())).toEqual({ status: "pending-login", smsSent: true, expiresInSeconds: expect.any(Number) });
 
     const unsent = fixture(null, { ...challenge(), validatorJwt: undefined });
-    expect(await runCli(["login", "--status", "--json"], unsent.deps)).toBe(0);
+    expect(await runCli(["login", "--status"], unsent.deps)).toBe(0);
     expect(JSON.parse(unsent.output())).toMatchObject({ status: "pending-login", smsSent: false });
 
     const signedIn = fixture();
-    expect(await runCli(["login", "--status", "--json"], signedIn.deps)).toBe(0);
+    expect(await runCli(["login", "--status"], signedIn.deps)).toBe(0);
     expect(JSON.parse(signedIn.output())).toEqual({ status: "signed-in" });
     expect(signedIn.calls).toEqual(["load"]);
   });
@@ -888,7 +888,7 @@ describe("CLI dispatch", () => {
   test("malformed login flags are rejected before storage or upstream and never echoed", async () => {
     for (const argv of [["login", "--id", "0123456789"], ["login", "--id", "12a"], ["login", "--code", "12345"], ["login", "--code", "1234567"], ["login", "--id", "012345678", "--phone", "0"], ["login", "--id", "012345678", "--phone", "9z9"], ["login", "--status", "extra"]]) {
       const f = fixture(null);
-      expect(await runCli([...argv, "--json"], f.deps)).toBe(2);
+      expect(await runCli([...argv], f.deps)).toBe(2);
       expect(f.calls).toEqual([]);
       expect(JSON.parse(f.error()).error.code).toBe("INVALID_USAGE");
       for (const value of argv.slice(1).filter(arg => !arg.startsWith("--"))) expect(f.error()).not.toContain(value);
@@ -919,7 +919,7 @@ describe("CLI dispatch", () => {
 
   test("saved status is explicitly unverified and makes no connection", async () => {
     const f = fixture();
-    expect(await runCli(["status", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["status"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual({ status: "saved", verified: false });
     expect(f.calls).toEqual(["load"]);
   });
@@ -936,7 +936,7 @@ describe("CLI dispatch", () => {
 
   test("verified status refreshes persistence without exposing the profile", async () => {
     const f = fixture();
-    expect(await runCli(["status", "--verify", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["status", "--verify"], f.deps)).toBe(0);
     expect(JSON.parse(f.output())).toEqual({ status: "signed-in", verified: true });
     expect(f.calls).toEqual(["load", "connect", "save"]);
     expect(f.output()).not.toContain("דוגמה");
@@ -950,7 +950,7 @@ describe("CLI dispatch", () => {
       session: { ...session, cookies: { ...session.cookies, cookies: [{ key: "SOMETHING_ELSE", value: "ignored" }, ...(value === undefined ? [] : [{ key: "F5_ST", value } as { key: string; value: string }])] } },
     });
     const good = fixture(withCookie("1z1z1z1767225600z3600"));
-    expect(await runCli(["status", "--json"], good.deps)).toBe(0);
+    expect(await runCli(["status"], good.deps)).toBe(0);
     const reported = JSON.parse(good.output());
     expect(reported.expiresAt).toBe("2026-01-01T01:00:00.000Z");
     expect(reported.expiryNote).toContain("keep-alive");
@@ -958,13 +958,13 @@ describe("CLI dispatch", () => {
     expect(good.calls).toEqual(["load"]);
 
     const verified = fixture(withCookie("1z1z1z1767225600z3600"));
-    expect(await runCli(["status", "--verify", "--json"], verified.deps)).toBe(0);
+    expect(await runCli(["status", "--verify"], verified.deps)).toBe(0);
     expect(JSON.parse(verified.output()).expiresAt).toBe("2026-01-01T01:00:00.000Z");
 
     // Absent, wrong field count, non-numeric fields and digits too large for a date all report nothing rather than guessing.
     for (const value of [undefined, 12345, "", "1z1z1z1767225600", "1z1z1z1767225600z3600z9", "1z1z1zabcz3600", "1z1z1z1767225600z", "1z1z1z1767225600z99999999999999999999"]) {
       const f = fixture(withCookie(value));
-      expect(await runCli(["status", "--json"], f.deps)).toBe(0);
+      expect(await runCli(["status"], f.deps)).toBe(0);
       expect(JSON.parse(f.output())).toEqual({ status: "saved", verified: false });
     }
   });
@@ -972,11 +972,11 @@ describe("CLI dispatch", () => {
   test("forced reauthentication names both literal login invocations and still promises no SMS retry", async () => {
     const f = fixture();
     f.deps.connect = async () => { throw new ReauthenticationRequired(401); };
-    expect(await runCli(["prescriptions", "--json", "--no-input"], f.deps)).toBe(3);
+    expect(await runCli(["prescriptions", "--no-input"], f.deps)).toBe(3);
     const message = JSON.parse(f.error()).error.message;
-    expect(message).toContain("`maccabi login`");
-    expect(message).toContain("`maccabi login --id <id>`");
-    expect(message).toContain("`maccabi login --code <code>`");
+    expect(message).toContain("`maccabi-health login`");
+    expect(message).toContain("`maccabi-health login --id <id>`");
+    expect(message).toContain("`maccabi-health login --code <code>`");
     expect(message).toContain("`--phone <n>`");
     expect(message).toContain("No automatic SMS retry was made.");
   });
@@ -1019,14 +1019,14 @@ describe("CLI dispatch", () => {
     for (const code of ["DEPENDENT_SELECTED", "OWNER_MISMATCH"] as const) {
       const f = fixture();
       f.deps.connect = async () => { throw new ReadOperationError(code, "account"); };
-      expect(await runCli(["status", "--verify", "--json"], f.deps)).toBe(1);
+      expect(await runCli(["status", "--verify"], f.deps)).toBe(1);
       expect(f.stored()).toEqual(saved);
       expect(f.calls).not.toContain("delete");
       expect(JSON.parse(f.error()).error.code).toBe(code);
     }
     const dependent = fixture();
     dependent.deps.connect = async () => { throw new ReadOperationError("DEPENDENT_SELECTED", "account"); };
-    await runCli(["status", "--verify", "--json"], dependent.deps);
+    await runCli(["status", "--verify"], dependent.deps);
     expect(JSON.parse(dependent.error()).error.message).toContain("no new login is needed");
   });
 
@@ -1042,7 +1042,7 @@ describe("CLI dispatch", () => {
 
   test("intended clinical JSON is preserved and tokens stay out", async () => {
     const f = fixture();
-    expect(await runCli(["prescriptions", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["prescriptions"], f.deps)).toBe(0);
     expect(JSON.parse(f.output()).data[0].drug_name).toBe("תרופה סינתטית");
     expect(f.output()).not.toContain("Bearer");
     expect(f.error()).toBe("");
@@ -1057,7 +1057,7 @@ describe("CLI dispatch", () => {
 
   test("lab year selection goes through the shared local-filter option", async () => {
     const f = fixture();
-    expect(await runCli(["labs", "--year", "2025", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["labs", "--year", "2025"], f.deps)).toBe(0);
     expect(f.calls).toContain("labs-year");
     expect(JSON.parse(f.output()).source.completeness).toBe("local-filtered-subset");
   });
@@ -1123,10 +1123,10 @@ describe("CLI dispatch", () => {
     ] as const) {
       const f = fixture();
       f.deps.connect = async () => { throw error; };
-      expect(await runCli(["profile", "--json"], f.deps)).toBe(exitCode);
+      expect(await runCli(["profile"], f.deps)).toBe(exitCode);
       expect(JSON.parse(f.error()).error.code).toBe(code);
       expect(JSON.parse(f.error()).error.exitCode).toBe(exitCode);
-      if (error instanceof SessionStoreError) expect(JSON.parse(f.error()).error.message).toContain("maccabi config directory");
+      if (error instanceof SessionStoreError) expect(JSON.parse(f.error()).error.message).toContain("maccabi-health config directory");
       // Only a reauthentication may remove the saved login; a 403 from the edge must not cost one.
       if (code !== "AUTH_REQUIRED") { expect(f.stored()).toEqual(saved); expect(f.calls).not.toContain("delete"); }
       // And when it is a real expiry the file really does go, so the message has to say so. The MCP
@@ -1153,25 +1153,25 @@ describe("CLI dispatch", () => {
   // COMMAND_FAILED is the branch nothing else matched, which is the definition of a failure we did not foresee.
   const unexpected = fixture();
   unexpected.deps.connect = async () => { throw new Error("synthetic unexpected failure"); };
-  expect(await runCli(["profile", "--json"], unexpected.deps)).toBe(1);
+  expect(await runCli(["profile"], unexpected.deps)).toBe(1);
   expect(JSON.parse(unexpected.error()).error.code).toBe("COMMAND_FAILED");
   expect(JSON.parse(unexpected.error()).error.message).toContain(ISSUES_URL);
 
   // A mistyped command and an expired session are the member's business; a bug report would be noise.
   const usage = fixture();
-  expect(await runCli(["not-a-real-command", "--json"], usage.deps)).toBe(2);
+  expect(await runCli(["not-a-real-command"], usage.deps)).toBe(2);
   expect(JSON.parse(usage.error()).error.code).toBe("INVALID_USAGE");
   expect(usage.error()).not.toContain(ISSUES_URL);
   const auth = fixture();
   auth.deps.connect = async () => { throw new ReauthenticationRequired(401); };
-  expect(await runCli(["profile", "--json"], auth.deps)).toBe(3);
+  expect(await runCli(["profile"], auth.deps)).toBe(3);
   expect(JSON.parse(auth.error()).error.code).toBe("AUTH_REQUIRED");
   expect(auth.error()).not.toContain(ISSUES_URL);
 });
 test("network timeouts have actionable JSON errors and keep the session without retries", async () => {
     const f = fixture();
     f.deps.connect = async () => { f.calls.push("connect"); throw new UpstreamError("REQUEST_TIMEOUT"); };
-    expect(await runCli(["profile", "--json"], f.deps)).toBe(1);
+    expect(await runCli(["profile"], f.deps)).toBe(1);
     expect(JSON.parse(f.error()).error.code).toBe("REQUEST_TIMEOUT");
     expect(JSON.parse(f.error()).error.message).toContain("Check connectivity");
     expect(f.output()).toBe("");
@@ -1188,7 +1188,7 @@ test("network timeouts have actionable JSON errors and keep the session without 
       const f = fixture();
       f.deps.connect = async () => ({ readers: { getVaccinationCertificatePdf: async () => ({ data: new TextEncoder().encode("%PDF-synthetic") }), currentOwner: owner } as unknown as Connected["readers"], exportSession: async () => session });
       f.deps.savePdf = async () => { throw Object.assign(new Error("synthetic filesystem failure"), { code: errno }); };
-      expect(await runCli(["vaccination-pdf", "--out", "synthetic-certificate.pdf", "--json"], f.deps)).toBe(1);
+      expect(await runCli(["vaccination-pdf", "--out", "synthetic-certificate.pdf"], f.deps)).toBe(1);
       expect(JSON.parse(f.error()).error.code).toBe(code);
       // Re-running with the same --out is the ordinary thing to do, and refusing to overwrite is documented.
       expect(f.error()).not.toContain(ISSUES_URL);
@@ -1198,6 +1198,8 @@ test("network timeouts have actionable JSON errors and keep the session without 
 
   test("each usage mistake names itself and points at the help that answers it", async () => {
     for (const [argv, fragment] of [
+      [["labs", "--json"], "Unknown or repeated option"],
+      [["version", "--json"], "Unknown or repeated option"],
       [["not-a-real-command"], "Unknown command"],
       [["labs", "stray-argument"], "Unexpected argument"],
       [["labs", "--not-an-option", "value"], "Unknown or repeated option"],
@@ -1205,12 +1207,12 @@ test("network timeouts have actionable JSON errors and keep the session without 
       [["labs", "--year"], "That option needs a value"],
     ] as const) {
       const f = fixture();
-      expect(await runCli([...argv, "--json"], f.deps)).toBe(2);
+      expect(await runCli([...argv], f.deps)).toBe(2);
       const reported = JSON.parse(f.error()).error;
       expect(reported.code).toBe("INVALID_USAGE");
       expect(reported.message).toContain(fragment);
       // A flag mistake is answered by the command's own help; the top-level index lists no flags.
-      if (argv[0] !== "not-a-real-command" && fragment !== "Unexpected argument") expect(reported.message).toContain(`maccabi help ${argv[0]}`);
+      if (argv[0] !== "not-a-real-command" && fragment !== "Unexpected argument") expect(reported.message).toContain(`maccabi-health help ${argv[0]}`);
       expect(f.calls).toEqual([]);
       expect(f.output()).toBe("");
     }
@@ -1219,7 +1221,7 @@ test("network timeouts have actionable JSON errors and keep the session without 
   test("a read that succeeded survives a config directory that cannot be written", async () => {
     const f = fixture();
     f.deps.store = { ...f.deps.store, save: async () => { f.calls.push("save"); throw new SessionStoreError(); } };
-    expect(await runCli(["prescriptions", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["prescriptions"], f.deps)).toBe(0);
     expect(f.output()).toContain("תרופה סינתטית");
     expect(f.error()).toContain("could not be saved");
     expect(f.calls).toEqual(["load", "connect", "prescriptions", "save"]);
@@ -1259,16 +1261,17 @@ test("network timeouts have actionable JSON errors and keep the session without 
     for (const command of commands) if (!command.options.includes("limit")) expect(command.usage).not.toContain("--limit");
   });
 
-  test("neither help form claims mcp accepts --json", async () => {
+  test("help says --json is only for help and keep-alive", async () => {
     const machine = fixture();
     expect(await runCli(["--json"], machine.deps)).toBe(0);
-    expect(JSON.parse(machine.output()).json).toContain("except `mcp`");
+    expect(JSON.parse(machine.output()).json).toContain("only for help and keep-alive");
     const bare = fixture();
     expect(await runCli([], bare.deps)).toBe(0);
-    expect(bare.output()).toContain("any command except mcp");
+    expect(bare.output()).toContain("--json is only for help and keep-alive");
     const full = fixture();
     expect(await runCli(["help"], full.deps)).toBe(0);
-    expect(full.output()).toContain("All commands except mcp accept");
+    expect(full.output()).toContain("--json is only for help and keep-alive");
+    expect(full.output()).toContain("All commands except mcp accept --no-input");
   });
 
   test("interrupting the interactive login reports a cancellation, not a defect in this client", async () => {
@@ -1287,7 +1290,7 @@ test("network timeouts have actionable JSON errors and keep the session without 
     noTerminal.deps.prompt = async () => { throw new PromptUnavailable(); };
     expect(await runCli(["login"], noTerminal.deps)).toBe(3);
     expect(noTerminal.error()).toContain("INTERACTIVE_LOGIN_REQUIRED");
-    expect(noTerminal.error()).toContain("maccabi login --id <id>");
+    expect(noTerminal.error()).toContain("maccabi-health login --id <id>");
   });
 
   test("a mistyped phone menu answer re-prompts instead of ending the login", async () => {
@@ -1305,7 +1308,7 @@ test("network timeouts have actionable JSON errors and keep the session without 
   test("a --phone that is not on the list names the numbers this ID offers and sends nothing", async () => {
     const f = fixture(null);
     f.phones.push({ index: 2, label: "Phone ending 34", display: "ending 34", smsAvailable: true });
-    expect(await runCli(["login", "--id", "012345678", "--phone", "2", "--json"], f.deps)).toBe(3);
+    expect(await runCli(["login", "--id", "012345678", "--phone", "2"], f.deps)).toBe(3);
     const reported = JSON.parse(f.error()).error;
     expect(reported.code).toBe("INVALID_PHONE_CHOICE");
     expect(reported.message).toContain("1, 3");
@@ -1317,7 +1320,7 @@ test("network timeouts have actionable JSON errors and keep the session without 
   test("an ID with no SMS-capable number says so instead of blaming the operation", async () => {
     const f = fixture(null);
     f.deps.createAuth = (create => () => ({ ...create(), beginLogin: async () => { throw new UpstreamError("SMS_NOT_AVAILABLE"); } }))(f.deps.createAuth);
-    expect(await runCli(["login", "--id", "012345678", "--json"], f.deps)).toBe(1);
+    expect(await runCli(["login", "--id", "012345678"], f.deps)).toBe(1);
     const reported = JSON.parse(f.error()).error;
     expect(reported.code).toBe("SMS_NOT_AVAILABLE");
     expect(reported.message).toContain("No SMS-capable phone number");
@@ -1398,7 +1401,7 @@ describe("saved session file", () => {
     for (const content of ["not json", '{"session":{"version":2},"owner":{"memberId":1,"memberIdCode":"0"}}', JSON.stringify({ session, owner: { memberId: "12345678" } })]) {
       await writeFile(path, content, { mode: 0o600 });
       await expect(store.load()).rejects.toBeInstanceOf(SessionStoreError);
-      await expect(store.load()).rejects.toThrow("maccabi logout");
+      await expect(store.load()).rejects.toThrow("maccabi-health logout");
     }
   });
 
@@ -1464,7 +1467,7 @@ describe("saved session file", () => {
     for (const content of ["not json", JSON.stringify({ ...challenge(), version: 2 }), JSON.stringify({ ...challenge(), senderJwt: undefined }), JSON.stringify({ ...challenge(), memberId: "12345678" }), JSON.stringify({ ...challenge(), cookies: {} })]) {
       await writeFile(path, content, { mode: 0o600 });
       await expect(store.load()).rejects.toBeInstanceOf(SessionStoreError);
-      await expect(store.load()).rejects.toThrow("maccabi logout");
+      await expect(store.load()).rejects.toThrow("maccabi-health logout");
     }
   });
 
@@ -1493,8 +1496,8 @@ test("real executable help and rejected secret arguments require neither storage
   const main = new URL("../../../dist/cli.js", import.meta.url).pathname;
   const help = spawnSync(process.execPath, [main, "--help"]);
   expect(help.status).toBe(0);
-  expect(help.stdout.toString()).toContain("maccabi login");
-  const rejected = spawnSync(process.execPath, [main, "profile", "--otp", "synthetic-secret", "--json"]);
+  expect(help.stdout.toString()).toContain("maccabi-health login");
+  const rejected = spawnSync(process.execPath, [main, "profile", "--otp", "synthetic-secret"]);
   expect(rejected.status).toBe(2);
   expect(rejected.stderr.toString()).not.toContain("synthetic-secret");
   expect(rejected.stdout.toString()).toBe("");
@@ -1508,7 +1511,7 @@ test("real executable help and rejected secret arguments require neither storage
   expect(JSON.parse(discovery.stdout.toString()).commands.some((command: { name: string }) => command.name === "labs")).toBe(true);
   const version = spawnSync(process.execPath, [main, "--version"]);
   expect(version.status).toBe(0);
-  expect(version.stdout.toString()).toBe("maccabi 0.1.0\n");
+  expect(version.stdout.toString()).toBe("maccabi-health 0.1.0\n");
 });
 
 describe("anonymous public directory CLI", () => {
@@ -1531,7 +1534,7 @@ describe("anonymous public directory CLI", () => {
           getProviderDetails: async (...args) => { expect(args).toEqual([category, "synthetic-key", reference, options]); return detail; },
         }; };
         const selection = ["directory-search", "directory-detail"].includes(command) ? ["--field", "synthetic-key", "--city", options.city, "--name", options.name, "--page", "2"] : [];
-        expect(await runCli([command, "--category", category, ...selection, ...(command === "directory-detail" ? ["--reference", reference] : []), "--json", "--no-input"], f.deps)).toBe(0);
+        expect(await runCli([command, "--category", category, ...selection, ...(command === "directory-detail" ? ["--reference", reference] : []), "--no-input"], f.deps)).toBe(0);
         expect(JSON.parse(f.output())).toEqual(command === "directory-detail" ? detail : command === "directory-search" ? search : command === "directory-cities" ? cities : catalog);
         expect(f.calls).toEqual([]); expect(f.prompts).toEqual([]); expect(creations).toBe(1); expect(f.error()).toBe("");
       }
@@ -1540,16 +1543,16 @@ describe("anonymous public directory CLI", () => {
   test("directory invalid inputs and errors never read or delete saved owner state", async () => {
     for (const args of [[], ["--field", "a,b"], ["--field", "two keys"], ["--field", "a", "--owner", "forbidden"], ["--field", "a", "--page", "0"], ["--field", "a", "--page", "1001"], ["--field", "a", "--city", "two cities"], ["--field", "a", "--name", " "], ["--field", "a", "--name", "x".repeat(201)], ["--field", "a", "--name", "invalid\nname"]]) {
       const f = fixture(); f.deps.createDirectory = () => { throw new Error("Must not construct"); };
-      expect(await runCli(["directory-search", "--category", "doctors", ...args, "--json"], f.deps)).toBe(2); expect(f.calls).toEqual([]);
+      expect(await runCli(["directory-search", "--category", "doctors", ...args], f.deps)).toBe(2); expect(f.calls).toEqual([]);
     }
     for (const argv of [["directory-fields"], ["directory-cities", "--category", "invented"], ["directory-detail", "--category", "doctors", "--field", "a", "--reference", "malformed"], ["doctor-search", "--field", "a"]]) {
-      const f = fixture(); expect(await runCli([...argv, "--json"], f.deps)).toBe(2); expect(f.calls).toEqual([]);
+      const f = fixture(); expect(await runCli([...argv], f.deps)).toBe(2); expect(f.calls).toEqual([]);
     }
     for (const error of [new UpstreamError("DIRECTORY_UNKNOWN_FIELD"), new ReauthenticationRequired(401)]) {
       const f = fixture(); const fail = async (): Promise<never> => { throw error; };
       f.deps.createDirectory = () => ({ listProviderFields: fail, listProviderCities: fail, searchProviders: fail, getProviderDetails: fail });
       for (const command of ["directory-search", "directory-detail"]) {
-        expect(await runCli([command, "--category", "doctors", "--field", "synthetic-key", ...(command === "directory-detail" ? ["--reference", "provider-" + "a".repeat(32)] : []), "--json"], f.deps)).toBe(1);
+        expect(await runCli([command, "--category", "doctors", "--field", "synthetic-key", ...(command === "directory-detail" ? ["--reference", "provider-" + "a".repeat(32)] : [])], f.deps)).toBe(1);
         expect(f.calls).toEqual([]); expect(f.stored()).toEqual(saved); expect(f.output()).toBe("");
         // The challenge has its own branch above this one, so anything reaching here is something else
         // and has to say so - otherwise a caller reads every directory failure as the bot filter.
@@ -1564,7 +1567,7 @@ test("anonymous directory bot challenge passes core's sentence through without t
   const message = "The public directory host served a bot-challenge page instead of its own data. Synthetic marker.";
   const f = fixture(); const fail = async (): Promise<never> => { throw new MaccabiError("DIRECTORY_BOT_CHALLENGE", message); };
   f.deps.createDirectory = () => ({ listProviderFields: fail, listProviderCities: fail, searchProviders: fail, getProviderDetails: fail });
-  expect(await runCli(["directory-search", "--category", "doctors", "--field", "synthetic-key", "--json"], f.deps)).toBe(1);
+  expect(await runCli(["directory-search", "--category", "doctors", "--field", "synthetic-key"], f.deps)).toBe(1);
   const error = JSON.parse(f.error()).error;
   expect(error.code).toBe("DIRECTORY_BOT_CHALLENGE"); expect(error.exitCode).toBe(1);
   expect(error.message).toBe(message);
@@ -1576,7 +1579,7 @@ test("read failures carry per-code guidance that names the operation that failed
   for (const [code, operation] of [["OWNER_MISMATCH", "lab-result"], ["UNSUPPORTED_FLOW", "recent-providers"]] as const) {
     const f = fixture();
     f.deps.connect = async () => { throw new ReadOperationError(code, operation); };
-    expect(await runCli(["profile", "--json"], f.deps)).toBe(1);
+    expect(await runCli(["profile"], f.deps)).toBe(1);
     const error = JSON.parse(f.error()).error;
     expect(error.code).toBe(code);
     expect(error.exitCode).toBe(1);
@@ -1616,17 +1619,17 @@ describe("imaging viewer commands", () => {
 
   test("the five commands pass through the UIDs the previous command returned", async () => {
     const f = imaging();
-    expect(await runCli(["imaging-studies", "--json"], f.deps)).toBe(0);
-    expect(await runCli(["imaging-study", "--study", STUDY, "--json"], f.deps)).toBe(0);
-    expect(await runCli(["imaging-image", "--study", STUDY, "--series", SERIES, "--image", SOP, "--json"], f.deps)).toBe(0);
+    expect(await runCli(["imaging-studies"], f.deps)).toBe(0);
+    expect(JSON.parse(f.output()).data[0].request_id).toBe(STUDY);
+    expect(await runCli(["imaging-study", "--study", STUDY], f.deps)).toBe(0);
+    expect(await runCli(["imaging-image", "--study", STUDY, "--series", SERIES, "--image", SOP], f.deps)).toBe(0);
     expect(f.asked).toEqual([["list"], ["study", STUDY], ["image", STUDY, SERIES, SOP]]);
-    expect(JSON.parse(f.output().trim().split("\n")[0]!).data[0].request_id).toBe(STUDY);
   });
 
   /** Image bytes go to a private file. Nothing binary is ever printed. */
   test("the thumbnail is written to the file and only its size is reported", async () => {
     const f = imaging();
-    expect(await runCli(["imaging-thumbnail", "--study", STUDY, "--series", SERIES, "--image", SOP, "--out", "/synthetic/out.jpg", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["imaging-thumbnail", "--study", STUDY, "--series", SERIES, "--image", SOP, "--out", "/synthetic/out.jpg"], f.deps)).toBe(0);
     expect(f.written).toEqual([{ path: "/synthetic/out.jpg", bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]) }]);
     const result = JSON.parse(f.output());
     expect(result).toMatchObject({ status: "saved", mimeType: "image/jpeg", bytes: 4 });
@@ -1639,7 +1642,7 @@ describe("imaging viewer commands", () => {
    */
   test("the pixel buffer is written to the file while its geometry is printed", async () => {
     const f = imaging();
-    expect(await runCli(["imaging-pixels", "--study", STUDY, "--series", SERIES, "--image", SOP, "--out", "/synthetic/out.raw", "--json"], f.deps)).toBe(0);
+    expect(await runCli(["imaging-pixels", "--study", STUDY, "--series", SERIES, "--image", SOP, "--out", "/synthetic/out.raw"], f.deps)).toBe(0);
     expect(f.written[0]!.bytes).toBe(pixels);
     const result = JSON.parse(f.output());
     expect(result).toMatchObject({ status: "saved", mimeType: "application/octet-stream", bytes: 24 });
@@ -1649,12 +1652,12 @@ describe("imaging viewer commands", () => {
 
   test("a missing or malformed UID is a usage error before any session is touched", async () => {
     for (const argv of [
-      ["imaging-study", "--json"],
-      ["imaging-image", "--study", STUDY, "--json"],
-      ["imaging-pixels", "--study", STUDY, "--series", SERIES, "--image", SOP, "--json"],
-      ["imaging-study", "--study", "not-a-uid", "--json"],
-      ["imaging-study", "--study", "1.2.3/../../etc", "--json"],
-      ["imaging-image", "--study", STUDY, "--series", SERIES, "--image", "1.".repeat(40), "--json"],
+      ["imaging-study"],
+      ["imaging-image", "--study", STUDY],
+      ["imaging-pixels", "--study", STUDY, "--series", SERIES, "--image", SOP],
+      ["imaging-study", "--study", "not-a-uid"],
+      ["imaging-study", "--study", "1.2.3/../../etc"],
+      ["imaging-image", "--study", STUDY, "--series", SERIES, "--image", "1.".repeat(40)],
     ]) {
       const f = imaging();
       expect(await runCli(argv, f.deps)).toBe(2);

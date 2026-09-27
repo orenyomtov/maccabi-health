@@ -83,7 +83,7 @@ const synthetic = (tag: string) => ({ version: 1, authenticatedAt: tag, cookies:
 const renewingReaders = (renew: () => Promise<unknown>) => ({ renewSession: renew } as unknown as ReaderOperations);
 
 /**
- * Maccabi kills an idle session long before its absolute cap, and each CLI run is a fresh process.
+ * Maccabi ends a session an hour from login, and each CLI run is a fresh process.
  * The stdio server is the only long-lived one, so these cover the timer that keeps the session usable.
  */
 describe("stdio background session renewal", () => {
@@ -222,7 +222,7 @@ describe("stdio background session renewal", () => {
   });
 
   test("the stdio reauthentication guidance names the commands the member actually has to type", async () => {
-    for (const literal of ["`maccabi login`", "`maccabi login --id <id>`", "`maccabi login --code <code>`", "`--phone <n>`"]) {
+    for (const literal of ["`maccabi-health login`", "`maccabi-health login --id <id>`", "`maccabi-health login --code <code>`", "`--phone <n>`"]) {
       expect(CLI_REAUTHENTICATION_INSTRUCTION).toContain(literal);
     }
     const lease = await localSessionResolver({ load: async () => ({ session: synthetic("stored"), owner: renewalOwner }), save: async () => {}, delete: async () => {} })();

@@ -70,12 +70,12 @@ function defaults(): CliDependencies {
   };
 }
 class UsageError extends Error {}
-const INTERACTIVE_LOGIN_HELP = "Login needs an interactive terminal, or the two flag steps. Run `maccabi login` without --no-input in a real terminal, or `maccabi login --id <id>` and then `maccabi login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No SMS was sent.";
+const INTERACTIVE_LOGIN_HELP = "Login needs an interactive terminal, or the two flag steps. Run `maccabi-health login` without --no-input in a real terminal, or `maccabi-health login --id <id>` and then `maccabi-health login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No SMS was sent.";
 interface Args { command: string; flags: Map<string, string | true>; helpFor?: string; topLevel?: true }
 /**
  * Typing the bare binary is the cheapest thing an agent can do, so it has to stay cheap to read.
- * `maccabi`, `maccabi --help` and `maccabi --json` all land on the short index; the full catalog is
- * still one word away under the explicit `maccabi help`.
+ * `maccabi-health`, `maccabi-health --help` and `maccabi-health --json` all land on the short index; the full catalog is
+ * still one word away under the explicit `maccabi-health help`.
  */
 const TOP_LEVEL = ["--help", "-h", "--json"];
 function parse(argv: string[]): Args {
@@ -85,7 +85,7 @@ function parse(argv: string[]): Args {
   let command = argv[0] ?? "help";
   if (["--help", "-h"].includes(command)) command = "help";
   if (command === "--version") command = "version";
-  if (!Object.hasOwn(COMMANDS, command)) throw new UsageError("Unknown command. Run maccabi to list every command, or maccabi help COMMAND. Credentials are never accepted as arguments.");
+  if (!Object.hasOwn(COMMANDS, command)) throw new UsageError("Unknown command. Run maccabi-health to list every command, or maccabi-health help COMMAND. Credentials are never accepted as arguments.");
   const parsed = new Map<string, string | true>();
   let helpFor: string | undefined;
   if (command !== "help" && argv.slice(1).some(arg => arg === "--help" || arg === "-h")) {
@@ -96,11 +96,11 @@ function parse(argv: string[]): Args {
     if (command === "help" && !arg.startsWith("-") && !helpFor && (Object.hasOwn(COMMANDS, arg) || arg === MCP_COMMAND)) { helpFor = arg; continue; }
     if (!arg.startsWith("--")) throw new UsageError("Unexpected argument. This command takes options only.");
     const key = arg.slice(2);
-    if (!commandOptions(command).includes(key) || parsed.has(key)) throw new UsageError(`Unknown or repeated option. Run maccabi help ${command} for the options it takes. Credentials are never accepted as arguments.`);
+    if (!commandOptions(command).includes(key) || parsed.has(key)) throw new UsageError(`Unknown or repeated option. Run maccabi-health help ${command} for the options it takes. Credentials are never accepted as arguments.`);
     if (["json", "verify", "no-input", "irregular-only"].includes(key) || command === "login" && ["status", "no-keep-alive"].includes(key) || command === "logout" && key === "all") parsed.set(key, true);
     else {
       const value = argv[++index];
-      if (!value || value.startsWith("--")) throw new UsageError(`That option needs a value. Run maccabi help ${command}.`);
+      if (!value || value.startsWith("--")) throw new UsageError(`That option needs a value. Run maccabi-health help ${command}.`);
       parsed.set(key, value);
     }
   }
@@ -183,7 +183,7 @@ function validDate(date: string): boolean {
 }
 function required(args: Args, name: string): string {
   const value = args.flags.get(name);
-  if (typeof value !== "string") throw new UsageError(`Missing --${name}. Run maccabi help ${args.command}.`);
+  if (typeof value !== "string") throw new UsageError(`Missing --${name}. Run maccabi-health help ${args.command}.`);
   return value;
 }
 function reference(args: Args): ProviderReference {
@@ -204,26 +204,21 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
   let args: Args | undefined;
   // Recognize machine errors even when parsing fails; never include caller-supplied values.
   const fail = (code: string, message: string, exitCode: number): number => {
-    deps.stderr(argv.includes("--json")
-      ? JSON.stringify({ error: { code, message, exitCode } }) + "\n"
-      : `${code}: ${message}\n`);
+    deps.stderr(JSON.stringify({ error: { code, message, exitCode } }) + "\n");
     return exitCode;
   };
   try {
     args = parse(argv);
     // Every printed result goes through safeClinical, the same filter the MCP surface uses, so the two
-    // never return different data for the same read. Terminals, shell history and whatever --json is
-    // piped into are all places identity fields, credentials and private document paths must not land.
+    // never return different data for the same read. Terminals and shell history are places identity
+    // fields, credentials and private document paths must not land.
     const output = (value: unknown) => deps.stdout(JSON.stringify(safeClinical(value), null, args!.flags.has("json") ? undefined : 2) + "\n");
     if (args.command === "help") {
       if (args.topLevel) { if (args.flags.has("json")) output(indexDiscovery()); else deps.stdout(index()); return 0; }
       if (args.flags.has("json")) output(discovery(args.helpFor)); else deps.stdout(help(args.helpFor));
       return 0;
     }
-    if (args.command === "version") {
-      if (args.flags.has("json")) output({ name: "maccabi", version: VERSION }); else deps.stdout(`maccabi ${VERSION}\n`);
-      return 0;
-    }
+    if (args.command === "version") { deps.stdout(`maccabi-health ${VERSION}\n`); return 0; }
     if (DIRECTORY_COMMANDS.includes(args.command)) {
       const directory = deps.createDirectory?.() ?? new MaccabiDirectory();
       const category = required(args, "category") as DirectoryCategory;
@@ -311,7 +306,7 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
       output({ status: saved ? "saved" : "signed-out", verified: false, ...expiryEstimate(saved?.session) });
       return 0;
     }
-    if (!saved) return fail("AUTH_REQUIRED", "No saved session. Run `maccabi login` in an interactive terminal, or `maccabi login --id <id>` and then `maccabi login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No SMS was sent.", 3);
+    if (!saved) return fail("AUTH_REQUIRED", "No saved session. Run `maccabi-health login` in an interactive terminal, or `maccabi-health login --id <id>` and then `maccabi-health login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No SMS was sent.", 3);
     const connected = await deps.connect(saved.session, saved.owner);
     const readers = connected.readers;
     if (args.command === "keep-alive") {
@@ -442,9 +437,9 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
     if (!DIRECTORY_COMMANDS.includes(args?.command ?? "") && error instanceof ReauthenticationRequired) {
       try { await deps.store.delete(); }
       catch {
-        return fail("SESSION_REMOVAL_FAILED", "The saved session needs a new login, but its file could not be removed. Check the config directory permissions and run maccabi logout.", 1);
+        return fail("SESSION_REMOVAL_FAILED", "The saved session needs a new login, but its file could not be removed. Check the config directory permissions and run maccabi-health logout.", 1);
       }
-      return fail("AUTH_REQUIRED", "Maccabi rejected the saved session as expired, so it has been removed from local storage; there is nothing left to repair. Run `maccabi login` in an interactive terminal, or `maccabi login --id <id>` and then `maccabi login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No automatic SMS retry was made.", 3);
+      return fail("AUTH_REQUIRED", "Maccabi rejected the saved session as expired, so it has been removed from local storage; there is nothing left to repair. Run `maccabi-health login` in an interactive terminal, or `maccabi-health login --id <id>` and then `maccabi-health login --code <code>` (add `--phone <n>` when several SMS numbers are on file). No automatic SMS retry was made.", 3);
     }
     // Raw mode turns Ctrl-C into a data byte rather than a signal, so the normal way to abort the
     // first command a new member ever runs arrives here as an ordinary rejected promise.
@@ -476,7 +471,7 @@ export async function runCli(argv: string[], overrides: Partial<CliDependencies>
   }
 }
 
-const EXPIRY_NOTE = "Estimated absolute cap read from the local session cookie; no request was made. Maccabi also ends an idle session well before this. A finished `maccabi login` starts keep-alive for that hour; if it is not running, `maccabi keep-alive --interval 240 --duration 3600` holds the session open until the cap.";
+const EXPIRY_NOTE = "Estimated absolute cap read from the local session cookie; no request was made. The session ends an hour from login. A finished `maccabi-health login` starts keep-alive for that hour; if it is not running, `maccabi-health keep-alive --interval 240 --duration 3600` holds the session open until the cap.";
 /**
  * F5 BIG-IP puts the session's own absolute deadline in F5_ST as `1z1z1z<start>z<timeout>`, both in
  * seconds. Reading it costs nothing and tells the member when a new login becomes unavoidable. The
@@ -531,7 +526,7 @@ async function armLoginKeepAlive(args: Args, deps: CliDependencies): Promise<"st
     await deps.startKeepAlive();
     return "started";
   } catch {
-    deps.stderr("Warning: signed in, but the background keep-alive did not start. Run `maccabi keep-alive --interval 240 --duration 3600`.\n");
+    deps.stderr("Warning: signed in, but the background keep-alive did not start. Run `maccabi-health keep-alive --interval 240 --duration 3600`.\n");
     return "not-started";
   }
 }
@@ -543,7 +538,7 @@ function keepAlivePidPath(env: NodeJS.ProcessEnv): string {
 /** Hour-long renewal in a detached process, so login itself returns. */
 async function startLoginKeepAlive(deps: CliDependencies): Promise<void> {
   const script = process.argv[1];
-  if (!script) throw new Error("Cannot locate the maccabi executable to start keep-alive.");
+  if (!script) throw new Error("Cannot locate the maccabi-health executable to start keep-alive.");
   const child = spawn(process.execPath, [script, "keep-alive", "--interval", KEEP_ALIVE_INTERVAL, "--duration", KEEP_ALIVE_DURATION], {
     detached: true, stdio: "ignore", env: deps.env, windowsHide: true,
   });

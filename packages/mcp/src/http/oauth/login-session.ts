@@ -4,7 +4,7 @@ import { FileSessionStore, type CredentialStore, type PendingLoginStore, type Sa
 import { credentialPath, subjectOf } from "./subject";
 
 export const SESSION_TTL_MS = 10 * 60 * 1000;
-export const MAX_SESSIONS = 8;
+export const MAX_SESSIONS = 1024;
 export const SMS_WINDOW_MS = 60 * 1000;
 export const MAX_SMS_PER_WINDOW = 5;
 const COOKIE_PREFIX = "maccabi_login_";

@@ -18,7 +18,7 @@ Step 7 needs the cookie jar built up during steps 1-6. That single fact drives t
 
 ## Why there is a pending-login file
 
-`MaccabiAuth` keeps the challenge (the sender JWT, the validator JWT, and the cookie jar) in memory. That is fine for an interactive login, where one process prompts for the ID, waits, prompts for the code, and finishes. It does not survive `maccabi login --id` exiting and `maccabi login --code` starting as a new process minutes later.
+`MaccabiAuth` keeps the challenge (the sender JWT, the validator JWT, and the cookie jar) in memory. That is fine for an interactive login, where one process prompts for the ID, waits, prompts for the code, and finishes. It does not survive `maccabi-health login --id` exiting and `maccabi-health login --code` starting as a new process minutes later.
 
 So a two-step login exports the challenge to `pending-login.json` between the two commands, and restores it before the final SAML POST. The file exists only for the gap between steps 4 and 5.
 
@@ -64,11 +64,11 @@ Live bearer tokens for an in-flight challenge. Ten-minute TTL, enforced when the
 { version, clients, codes, access, refresh }
 ```
 
-Written only by `maccabi mcp --http`. Holds the clients registered through `/register` (at most 64, forgotten after 90 days idle), unredeemed authorization codes, and live access and refresh tokens. Every token is stored as its SHA-256 hash, so the file cannot be read back for a usable bearer token. It does carry each token's subject, and the matching `sessions/<subject>.json` beside it is the real secret. Removed by `maccabi logout --all`.
+Written only by `maccabi-health mcp --http`. Holds the clients registered through `/register` (at most 1024, forgotten after 90 days idle), unredeemed authorization codes, and live access and refresh tokens. Every token is stored as its SHA-256 hash, so the file cannot be read back for a usable bearer token. It does carry each token's subject, and the matching `sessions/<subject>.json` beside it is the real secret. Removed by `maccabi-health logout --all`.
 
 ### `sessions/<subject>.json`: one signed-in member, HTTP mode
 
-The same shape and the same rules as `session.json`, one file per member who has authorized through the browser. The name is the subject hash described under [MCP](#mcp), not the ID number. Removed when that member's read hits reauthentication, when they call `maccabi_logout`, and by `maccabi logout --all`.
+The same shape and the same rules as `session.json`, one file per member who has authorized through the browser. The name is the subject hash described under [MCP](#mcp), not the ID number. Removed when that member's read hits reauthentication, when they call `maccabi_logout`, and by `maccabi-health logout --all`.
 
 ### What is never stored
 
@@ -77,12 +77,12 @@ The ID number and the SMS code. Neither is written to these files as a credentia
 ## CLI
 
 ```
-maccabi login                           interactive, masked prompts
-maccabi login --id DIGITS [--phone N]   start; sends one SMS
-maccabi login --code DIGITS             finish
-maccabi login --status                  offline, no network
-maccabi logout                          deletes session.json and pending-login.json
-maccabi logout --all                    also deletes oauth.json and every sessions/ file
+maccabi-health login                           interactive, masked prompts
+maccabi-health login --id DIGITS [--phone N]   start; sends one SMS
+maccabi-health login --code DIGITS             finish
+maccabi-health login --status                  offline, no network
+maccabi-health logout                          deletes session.json and pending-login.json
+maccabi-health logout --all                    also deletes oauth.json and every sessions/ file
 ```
 
 `MACCABI_ID` and `MACCABI_OTP` are read only when the matching flag is absent; flags win. Passing `--id` and `--code` together is a usage error: they are two separate commands by design, because the SMS has to arrive in between.
@@ -104,13 +104,13 @@ Which sign-in tools exist depends on the transport, because the two transports g
 
 All are `.strict()`. `maccabi_login_status` is `readOnlyHint: true`; the other three mutate local state and are not. `maccabi_logout` is the one `destructiveHint: true` tool on this server, because replacing what it deletes costs the member another SMS. They do not go through `withOwner`, the wrapper every read tool uses, because that wrapper requires an existing session, which is exactly what is missing. They do share the same `exclusive()` serializer, so a login cannot interleave with a read.
 
-Over stdio, `maccabi_login_start` and `maccabi_login_verify` put the ID number and the SMS code into the model's context, and into whatever the client persists or sends upstream. The server's `instructions` string says so, and says to prefer `maccabi login` in the member's own terminal when that is possible. When a read fails with `REAUTHENTICATION_REQUIRED`, the guidance names both options and states that cost.
+Over stdio, `maccabi_login_start` and `maccabi_login_verify` put the ID number and the SMS code into the model's context, and into whatever the client persists or sends upstream. The server's `instructions` string says so, and says to prefer `maccabi-health login` in the member's own terminal when that is possible. When a read fails with `REAUTHENTICATION_REQUIRED`, the guidance names both options and states that cost.
 
 Over HTTP those two tools are not registered at all. The sign-in happens in the member's own browser, during authorization, so there is nothing for the model to carry. `maccabi_login_status` and `maccabi_logout` stay: they read and clear local state for the member the token belongs to.
 
 ### The browser sign-in
 
-`maccabi mcp --http` is the authorization server and the resource server at once, on one loopback port:
+`maccabi-health mcp --http` is the authorization server and the resource server at once, on one loopback port:
 
 | path | what it is |
 |---|---|
@@ -133,7 +133,7 @@ Over stdio there is one member and one file. Over HTTP there can be several, so 
 
 It is derived from the member, not from the OAuth client, so two clients that authorize the same member share one credential file and one upstream session.
 
-The stdio server reads the same `session.json` the CLI writes: signing in with the CLI signs in stdio MCP, and `maccabi logout` in either place signs out both. HTTP mode does not read `session.json` at all. A CLI login does not carry into HTTP mode, and a browser login does not carry into the CLI or into stdio. `maccabi logout --all` is what clears the HTTP side.
+The stdio server reads the same `session.json` the CLI writes: signing in with the CLI signs in stdio MCP, and `maccabi-health logout` in either place signs out both. HTTP mode does not read `session.json` at all. A CLI login does not carry into HTTP mode, and a browser login does not carry into the CLI or into stdio. `maccabi-health logout --all` is what clears the HTTP side.
 
 ### Signing out has to reach both layers
 

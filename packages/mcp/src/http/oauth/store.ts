@@ -6,7 +6,7 @@ export const ACCESS_TTL_MS = 60 * 60 * 1000;
 export const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const CODE_TTL_MS = 60 * 1000;
 /** `/register` is unauthenticated by design, so the table needs a ceiling and a way to forget clients that stopped coming back. */
-export const MAX_CLIENTS = 64;
+export const MAX_CLIENTS = 1024;
 export const CLIENT_IDLE_MS = 90 * 24 * 60 * 60 * 1000;
 
 export interface StoredClient { clientId: string; redirectUris: string[]; clientName?: string; issuedAt: number; lastUsedAt: number }

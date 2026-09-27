@@ -1,4 +1,4 @@
-name: Publish npm release
+name: Publish release
 
 on:
   release:
@@ -38,7 +38,7 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           npm run build
-          test "$(node dist/cli.js --version)" = "maccabi $RELEASE_VERSION"
+          test "$(node dist/cli.js --version)" = "maccabi-health $RELEASE_VERSION"
           mkdir -p "$RUNNER_TEMP/npm-release"
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/npm-release"
       - name: Publish with npm trusted publishing
@@ -46,3 +46,11 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
           DIST_TAG: ${{ steps.release.outputs.dist_tag }}
         run: npm publish "$RUNNER_TEMP/npm-release/maccabi-health-${RELEASE_VERSION}.tgz" --ignore-scripts --registry https://registry.npmjs.org --access public --provenance --tag "$DIST_TAG"
+      - name: Publish the stable release to the MCP registry
+        if: steps.release.outputs.dist_tag == 'latest'
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum -c -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

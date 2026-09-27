@@ -1,7 +1,7 @@
 import { LOCAL_HTTP_PORT, PORT_VARIABLE, resolveHttpPort } from "./port";
 import { startLocalMcp } from "./stdio";
 
-export const MCP_USAGE = "Usage: maccabi mcp [--http [--port N]]\n";
+export const MCP_USAGE = "Usage: maccabi-health mcp [--http [--port N]]\n";
 
 /**
  * Resolves when the stdio client disconnects or the process is asked to stop, so the command returns
@@ -61,7 +61,7 @@ export async function runMcp(args: string[]): Promise<number> {
       // A swallowed reason here reads as "MCP is broken" when the real cause is usually one stale
       // server still holding the port, so say which port failed and why.
       const reason = (error as NodeJS.ErrnoException).code === "EADDRINUSE"
-        ? `port ${port} is already in use. Stop whatever is listening on it, pick another with \`--port N\`, or use the stdio transport with \`maccabi mcp\`.`
+        ? `port ${port} is already in use. Stop whatever is listening on it, pick another with \`--port N\`, or use the stdio transport with \`maccabi-health mcp\`.`
         : error instanceof Error && error.message ? error.message : "no reason was reported.";
       process.stderr.write(`Maccabi MCP HTTP transport could not start on http://${LOCAL_HTTP_HOST}:${port}${LOCAL_HTTP_PATH}: ${reason}\n`);
       return 1;
@@ -72,7 +72,7 @@ export async function runMcp(args: string[]): Promise<number> {
     return await new Promise<number>(() => {});
   } else if (args.length) {
     const hint = args[0] === "--port" ? `--port applies only with --http.\n` : "";
-    process.stderr.write(`${hint}${MCP_USAGE}Authenticate separately with \`maccabi login\`. No credentials are accepted here.\n`);
+    process.stderr.write(`${hint}${MCP_USAGE}Authenticate separately with \`maccabi-health login\`. No credentials are accepted here.\n`);
     return 2;
   } else {
     return await awaitStdioShutdown(startLocalMcp());

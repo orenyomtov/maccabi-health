@@ -21,7 +21,7 @@ describe("maccabi-health/mcp entry-point guard", () => {
     const child = spawnSync(process.execPath, ["dist/mcp.js"], { cwd: repo });
     expect(child.status).toBe(2);
     expect(child.stdout.toString()).toBe("");
-    expect(child.stderr.toString()).toContain("maccabi mcp");
+    expect(child.stderr.toString()).toContain("maccabi-health mcp");
   });
 
   test("importing the built module from another process leaves it alive and exporting the factory", () => {

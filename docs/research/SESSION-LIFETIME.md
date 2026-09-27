@@ -22,17 +22,17 @@ Known floor: one session survived true request gaps of 392s, 362s, 360s, and 359
 
 **Field evidence (2026-09-23):** a session created at T+0 was already rejected at about T+26m, nowhere near the absolute cap. Its cookie jar's `lastAccessed` was still exactly equal to the login timestamp, which proves nothing had touched the session in the interim. Three separate commands (`labs` twice, `status --verify`) all came back `AUTH_REQUIRED` after a real network round trip. This is an idle expiry, not the absolute cap.
 
-This is why the CLI feels like it "logs out constantly": it is a new process per invocation, so a user running one command every twenty minutes or so never keeps the session warm, and falls into the idle window well before the absolute cap.
+This is why the CLI feels like it "logs out constantly": it is a new process per invocation, so a user running one command every twenty minutes or so never keeps the session warm, and hits that idle expiry before the hour is up.
 
 The idle clock is defeatable with `keep-alive`. Its exact threshold is still unmeasured, and no longer interesting for how this client is used.
 
 ## Keep-alive run (2026-09-23)
 
-One login at T+0, then `maccabi keep-alive --interval 240 --duration 3600` as the only steady traffic on the session.
+One login at T+0, then `maccabi-health keep-alive --interval 240 --duration 3600` as the only steady traffic on the session.
 
 Twelve keep-alive ticks fired 240 seconds apart and all succeeded, spanning roughly T+14m through T+58m.
 
-**Proof point at T+56m35s.** `maccabi status --verify --json` exited 0 reporting `signed-in` with `verified: true`. That is a real network round trip, not a local read of the saved file.
+**Proof point at T+56m35s.** `maccabi-health status --verify` exited 0 reporting `signed-in` with `verified: true`. That is a real network round trip, not a local read of the saved file.
 
 **Predicted death at T+3600s**, decoded from `F5_ST` at login time (field[3] the login epoch, field[4] the 3600-second timeout).
 
@@ -66,7 +66,7 @@ An automatic reconnect would mean an automatic SMS to the member's phone, one co
 
 - **The stdio MCP server renews on a 240-second timer** (`startSessionRenewal` in `packages/mcp/src/stdio.ts`). It is the only long-lived process in this project. It runs through the same `exclusive()` executor the tools use, saves refreshed cookies through the lease, stops after a failure, and never invalidates the stored credential from the timer path. HTTP deliberately has no equivalent: it is multi-user with per-member leases. Observed live on 2026-09-23; see [Live validation runs](LIVE-VALIDATION.md).
 - **CLI `keep-alive`** defeats the idle timeout and cannot touch the absolute cap. Both halves were measured on 2026-09-23.
-- **`maccabi status` reports `expiresAt`**, decoded locally from `F5_ST` (`1z1z1z<start>z<timeout>`, both seconds) with no request. It is the absolute cap only; a malformed or absent cookie omits the field rather than guessing.
+- **`maccabi-health status` reports `expiresAt`**, decoded locally from `F5_ST` (`1z1z1z<start>z<timeout>`, both seconds) with no request. It is the absolute cap only; a malformed or absent cookie omits the field rather than guessing.
 
 Auto-reconnect stays out.
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- The command is `maccabi-health`. The `maccabi` binary from 0.1.0 is not installed.
+- CLI errors are always JSON on stderr. `version` prints one plain line.
+- The local HTTP server renews each signed-in member's session, including sessions already on disk, and stops that member's renewal on logout.
+- A stable GitHub release publishes the package and the official MCP registry listing.
+
 ## 0.1.0
 
 First public release.

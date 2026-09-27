@@ -26,6 +26,8 @@ export interface OAuthRouterDependencies {
   resource: () => URL;
   createAuth: LoginDependencies["createAuth"];
   connect: LoginDependencies["connect"];
+  /** The Maccabi credential is already on disk. HTTP mode starts that member's renewal here. */
+  onSignedIn?: (subject: string) => void;
 }
 export type OAuthRouter = (request: IncomingMessage, response: ServerResponse, url: URL) => boolean;
 
@@ -77,7 +79,7 @@ async function readBody(request: IncomingMessage): Promise<string | null> {
 /** The whole self-authored message set. Upstream text never reaches a page or a JSON body. */
 function loginMessage(error: unknown): string {
   if (error instanceof LoginError) return error.message;
-  if (error instanceof SessionStoreError) return "Protected storage could not be read or written. Check the permissions of the maccabi config directory, then try again.";
+  if (error instanceof SessionStoreError) return "Protected storage could not be read or written. Check the permissions of the maccabi-health config directory, then try again.";
   if (error instanceof MaccabiError) return "The sign-in step did not complete. Start again; no code was resent and nothing was retried.";
   return "The sign-in step could not be completed.";
 }
@@ -188,6 +190,7 @@ export function createOAuthRouter(deps: OAuthRouterDependencies): OAuthRouter {
         await verifyLogin(deps_, fields.get("code") ?? "");
         const subject = session.subject;
         if (subject === undefined) throw new Error("The completed login did not record a subject.");
+        deps.onSignedIn?.(subject);
         const code = await deps.store.issueCode({
           clientId: session.params.clientId, redirectUri: session.params.redirectUri, resource: session.params.resource,
           codeChallenge: session.params.codeChallenge, subject, scope: session.params.scope,

@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import {
@@ -12,6 +13,7 @@ import {
 import { configDirectory, FileSessionStore } from "@maccabi/cli/store";
 import { fileLoginDependencies, LoginError, type LoginDependencies, type LoginHandle } from "@maccabi/cli/login";
 import { LOCAL_HTTP_PORT } from "../port";
+import { startSessionRenewal } from "../stdio";
 import { createMaccabiMcpServer, serialExecutor, type Executor, type MaccabiMcpOptions } from "../tools";
 import { AuthorizeSessions, HTTP_REAUTH_INSTRUCTION, subjectSessionResolver } from "./oauth/login-session";
 import { buildAuthMetadata, OAUTH_SCOPE, WELL_KNOWN_PREFIX } from "./oauth/metadata";
@@ -39,6 +41,8 @@ export interface LocalHttpMcpOptions {
   configDir?: string;
   /** Test seam for the upstream half of the browser sign-in. */
   login?: Pick<LoginDependencies, "createAuth" | "connect">;
+  /** Test seam. Production uses the stdio default, 240 seconds. */
+  renewalIntervalMs?: number;
 }
 
 /** Long enough for a read that is nearly done, short enough that Ctrl-C does not read as a hang. */
@@ -67,6 +71,31 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
     return executor(work);
   };
 
+  // One renewal per member, the same 240-second timer stdio uses. A single process-wide timer cannot
+  // do this: two members must not queue behind each other, and one member's logout must not stop the other.
+  const renewals = new Map<string, { stop(): void }>();
+  const stopRenewal = (subject: string): void => {
+    const renewal = renewals.get(subject);
+    if (!renewal) return;
+    renewals.delete(subject);
+    renewal.stop();
+  };
+  const startRenewal = (subject: string): void => {
+    stopRenewal(subject);
+    renewals.set(subject, startSessionRenewal({
+      // The timer never invalidates. Deleting this credential from a background tick would cost an SMS.
+      resolveSession: subjectSessionResolver(sessionsDir, subject, async () => {}),
+      exclusive: executorFor(subject),
+      connect: options.mcp?.connect,
+      fetch: options.mcp?.fetch,
+      intervalMs: options.renewalIntervalMs,
+    }));
+  };
+  const invalidateSubject = async (subject: string): Promise<void> => {
+    stopRenewal(subject);
+    await oauth.revokeSubject(subject);
+  };
+
   const subjectLogin = (subject: string): LoginHandle => {
     const credentials = new FileSessionStore(credentialPath(sessionsDir, subject));
     const browserOnly = async (): Promise<never> => {
@@ -77,7 +106,7 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
       async status() { return await credentials.load() ? { status: "signed-in" } : { status: "signed-out" }; },
       // Both halves, always. A revoked credential with a live token strands the client: every read
       // answers REAUTHENTICATION_REQUIRED and nothing is left that can make it authorize again.
-      async logout() { await credentials.delete(); await oauth.revokeSubject(subject); return { status: "local-session-removed" }; },
+      async logout() { stopRenewal(subject); await credentials.delete(); await oauth.revokeSubject(subject); return { status: "local-session-removed" }; },
     };
   };
 
@@ -93,7 +122,7 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
       // The bearer gate below runs first, so every server instance is built for one verified member.
       const subject = subjectFrom(context.authInfo);
       return createMaccabiMcpServer({
-        resolveSession: subjectSessionResolver(sessionsDir, subject, () => oauth.revokeSubject(subject)),
+        resolveSession: subjectSessionResolver(sessionsDir, subject, () => invalidateSubject(subject)),
         runExclusive: executorFor(subject),
         login: subjectLogin(subject),
         loginTools: "status-only",
@@ -115,6 +144,7 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
   const router = createOAuthRouter({
     store: oauth, sessions, sessionsDir, origin, resource,
     createAuth: upstream.createAuth, connect: upstream.connect,
+    onSignedIn: startRenewal,
   });
 
   const serve = (request: IncomingMessage, response: ServerResponse): void => {
@@ -192,6 +222,13 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
     metadata: buildAuthMetadata(boundOrigin, boundResource),
     verifier: createTokenVerifier(oauth, boundResource),
   };
+  // A restart would otherwise leave every saved session to idle out. Login arms the same timer for a new one.
+  let saved: string[] = [];
+  try { saved = await readdir(sessionsDir); } catch { /* no one has signed in on this machine yet */ }
+  for (const name of saved) {
+    const subject = /^([0-9a-f]{32})\.json$/.exec(name)?.[1];
+    if (subject) startRenewal(subject);
+  }
   return {
     host: LOCAL_HTTP_HOST,
     port,
@@ -205,6 +242,7 @@ export async function startLocalHttpMcp(options: LocalHttpMcpOptions = {}): Prom
       const forced = setTimeout(() => server.closeAllConnections(), CLOSE_GRACE_MS);
       try { await closed; } finally { clearTimeout(forced); }
       await handler.close();
+      for (const subject of [...renewals.keys()]) stopRenewal(subject);
       await oauth.flush().catch(() => undefined);
       executors.clear();
     },

@@ -441,7 +441,7 @@ describe("official SDK in-memory MCP integration", () => {
       expect(response.isError).toBe(true);
       expect(structured(response).error.code).toBe("SESSION_STORE_UNAVAILABLE");
       expect(structured(response).error.code).not.toBe("READ_UNAVAILABLE");
-      expect(structured(response).error.instruction).toContain("maccabi config directory");
+      expect(structured(response).error.instruction).toContain("maccabi-health config directory");
       expect(JSON.stringify(response)).not.toContain("/home/example");
     }
   });
@@ -1138,7 +1138,7 @@ describe("sign-in tools", () => {
     const h = await setup({ login: handle({ status: async () => { throw new SessionStoreError("/home/example/.config/maccabi-mcp/pending-login.json could not be read."); } }) });
     const response = await h.client.callTool({ name: "maccabi_login_status", arguments: {} });
     expect(structured(response).error.code).toBe("SESSION_STORE_UNAVAILABLE");
-    expect(structured(response).error.instruction).toContain("maccabi config directory");
+    expect(structured(response).error.instruction).toContain("maccabi-health config directory");
     expect(JSON.stringify(response)).not.toContain("/home/example");
   });
 
@@ -1307,7 +1307,7 @@ describe("imaging viewer tools", () => {
     expect(names).not.toContain("maccabi_imaging_pixels");
     expect(names).not.toContain("maccabi_imaging_thumbnail");
     const coverage = JSON.stringify(await h.client.readResource({ uri: COVERAGE_URI }));
-    expect(coverage).toContain("maccabi imaging-pixels");
+    expect(coverage).toContain("maccabi-health imaging-pixels");
     expect(coverage).toContain("run live against that viewer end to end");
     expect(coverage).toContain("no viewer error response was ever captured");
   });

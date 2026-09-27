@@ -4,7 +4,7 @@
  * The readers deliberately preserve every source field, including the ones that identify the member,
  * authenticate the session, or point at a private document path. That is right for the library and
  * wrong for anything that prints, logs or ships a result: an MCP client keeps tool output in model
- * context, and the CLI writes it to a terminal, a shell scrape or whatever `--json` is piped into.
+ * context, and the CLI writes it to a terminal or a pipe.
  * Both surfaces need the same filter, so it lives here rather than in one of them, where the two
  * copies would drift the moment either side learned about a new field. It is exported from the
  * published entry for the same reason: a library caller who logs or forwards a read result has

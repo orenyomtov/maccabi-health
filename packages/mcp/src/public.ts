@@ -21,6 +21,6 @@ export type { MaccabiMcpOptions } from "./tools";
  */
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  process.stderr.write("maccabi-health/mcp is a library entry point, not a server. Run `maccabi mcp` (stdio) or `maccabi mcp --http` instead.\n");
+  process.stderr.write("maccabi-health/mcp is a library entry point, not a server. Run `maccabi-health mcp` (stdio) or `maccabi-health mcp --http` instead.\n");
   process.exit(2);
 }

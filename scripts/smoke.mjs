@@ -6,24 +6,24 @@
  * does. tsdown loads `tsdown.config.ts` through Node's own type stripping, unflagged only from
  * 22.18.0, and falls back to an `unrun` import that is not installed; vitest declares ^22.12.0. So
  * the floor job installs what a consumer installs and exercises the two entry points that have to
- * work: the `maccabi` bin, and an MCP stdio session far enough to list tools.
+ * work: the `maccabi-health` bin, and an MCP stdio session far enough to list tools.
  *
- * Usage: node scripts/smoke.mjs <path to the maccabi bin>
+ * Usage: node scripts/smoke.mjs <path to the maccabi-health bin>
  */
 import { spawn } from "node:child_process";
 import { strict as assert } from "node:assert";
 
 const bin = process.argv[2];
-assert.ok(bin, "usage: node scripts/smoke.mjs <path to the maccabi bin>");
+assert.ok(bin, "usage: node scripts/smoke.mjs <path to the maccabi-health bin>");
 
 const version = await new Promise((resolve, reject) => {
   const child = spawn(bin, ["version"], { stdio: ["ignore", "pipe", "inherit"] });
   let out = "";
   child.stdout.on("data", chunk => { out += chunk; });
   child.on("error", reject);
-  child.on("close", code => { code === 0 ? resolve(out.trim()) : reject(new Error(`maccabi version exited ${code}`)); });
+  child.on("close", code => { code === 0 ? resolve(out.trim()) : reject(new Error(`maccabi-health version exited ${code}`)); });
 });
-assert.match(version, /^maccabi \d+\.\d+\.\d+/, `unexpected version output: ${version}`);
+assert.match(version, /^maccabi-health \d+\.\d+\.\d+/, `unexpected version output: ${version}`);
 
 const server = spawn(bin, ["mcp"], { stdio: ["pipe", "pipe", "inherit"] });
 const pending = new Map();

@@ -67,4 +67,4 @@ jobs:
           cd "$RUNNER_TEMP/floor-install"
           npm init -y > /dev/null
           npm install --no-audit --no-fund "$RUNNER_TEMP"/floor/maccabi-health-*.tgz
-          node "$GITHUB_WORKSPACE/scripts/smoke.mjs" "$PWD/node_modules/.bin/maccabi"
+          node "$GITHUB_WORKSPACE/scripts/smoke.mjs" "$PWD/node_modules/.bin/maccabi-health"

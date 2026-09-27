@@ -27,4 +27,4 @@ Out of scope: vulnerabilities in Maccabi's own websites and APIs. This project i
 
 ## Handling your own data
 
-Sessions are stored under your user config directory. `maccabi logout --all` deletes every local credential, login challenge, registered OAuth client and issued token. Nothing is revoked at Maccabi by that command.
+Sessions are stored under your user config directory. `maccabi-health logout --all` deletes every local credential, login challenge, registered OAuth client and issued token. Nothing is revoked at Maccabi by that command.

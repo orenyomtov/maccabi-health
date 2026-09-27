@@ -9,7 +9,7 @@ import { connectSession, serialExecutor, createMaccabiMcpServer, type Executor, 
  */
 export const CLI_REAUTHENTICATION_INSTRUCTION =
   "Maccabi rejected the saved session as expired, so it has been removed from local storage; there is nothing left to repair. " +
-  "Run `maccabi login` in a terminal (or `maccabi login --id <id>`, then `maccabi login --code <code>`; add `--phone <n>` when several SMS numbers are on file), then retry. " +
+  "Run `maccabi-health login` in a terminal (or `maccabi-health login --id <id>`, then `maccabi-health login --code <code>`; add `--phone <n>` when several SMS numbers are on file), then retry. " +
   "maccabi_login_start and maccabi_login_verify can sign in from here instead, at the cost of putting the ID number and the SMS code into this conversation.";
 
 /**
@@ -60,7 +60,7 @@ export interface SessionRenewalOptions {
 }
 
 /**
- * Maccabi ends an idle session well before its absolute cap, and each CLI invocation is a new process
+ * Maccabi ends a session an hour from login, and each CLI invocation is a new process
  * that cannot hold a timer. The stdio server is the one long-lived process here, so renewing from it
  * keeps the session usable between tool calls. Nothing here writes to stdout: that is the MCP channel.
  */

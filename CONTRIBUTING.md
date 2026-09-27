@@ -33,23 +33,20 @@ Every release after the first runs through [publish.yml](https://github.com/oren
 
 A Trusted Publisher can only be attached to a package npm already knows about, so `0.1.0` is published by hand: the maintainer runs `npm publish --access public` locally, then sets the Trusted Publisher on npm to GitHub owner `orenyomtov`, repository `maccabi-health`, workflow filename `publish.yml`, with direct publishing allowed. `scripts/release.mjs` refuses to plan a release while the package is missing from the registry, which is why that first publish cannot go through the workflow. See [Trusted publishers](https://docs.npmjs.com/trusted-publishers/) and the [existing-package prerequisite](https://docs.npmjs.com/cli/v11/commands/npm-trust/).
 
-From `0.1.1` onward, publish a GitHub release tagged `vX.Y.Z`, or a SemVer prerelease such as `v0.2.0-beta.1` with the prerelease checkbox selected. The tag and checkbox must agree; build metadata (`+suffix`) is rejected. Stable releases use npm `latest`; prereleases use `next`. The workflow checks, validates, stamps the runner's package version without a source commit, builds, packs, and publishes through OIDC.
+From `0.1.1` onward, publish a GitHub release tagged `vX.Y.Z`, or a SemVer prerelease such as `v0.2.0-beta.1` with the prerelease checkbox selected. The tag and checkbox must agree; build metadata (`+suffix`) is rejected. Stable releases use npm `latest`; prereleases use `next`. The workflow checks, validates, stamps the runner's package version without a source commit, builds, packs, and publishes through OIDC. A stable release then publishes that same version to the MCP registry. A prerelease does not.
 
 For local verification, `npm pack` builds a tarball without publishing. Install that tarball and check CLI discovery and both MCP transports before a release.
 
 ## MCP Registry listing
 
-`server.json` at the repository root describes this server for the [official MCP registry](https://modelcontextprotocol.io/registry/quickstart). Nothing has been published to it yet; these are the steps, and the order is not optional.
+`server.json` at the repository root describes this server for the [official MCP registry](https://modelcontextprotocol.io/registry/quickstart). The registry stores that metadata only. Installs still come from npm.
 
-The registry proves npm ownership by fetching the published `package.json` and checking that its `mcpName` equals the `name` in `server.json`. Both currently read `io.github.orenyomtov/maccabi-health`, and the GitHub login in that namespace is what `mcp-publisher login github` grants. So **npm publish has to happen first**: the registry reads the published package, not the repository.
+[publish.yml](https://github.com/orenyomtov/maccabi-health/blob/main/.github/workflows/publish.yml) publishes the listing after a stable npm publish. The job already has `id-token: write`, and `mcp-publisher login github-oidc` uses that token. There is no second secret. `scripts/release.mjs` stamps both version fields in the runner's `server.json` before npm publish, and that is the file the publisher reads. Nothing is committed back. `0.1.0` is already on npm and is not listed. The `v0.1.1` release is the first one that publishes both.
 
-1. Publish to npm, following Release above.
-2. Install the publisher: `brew install mcp-publisher`, or the release tarball from [modelcontextprotocol/registry](https://github.com/modelcontextprotocol/registry).
-3. `mcp-publisher login github`: device-code OAuth, grants the `io.github.orenyomtov/*` namespace.
-4. `mcp-publisher publish` from the repository root.
+The registry proves npm ownership by fetching the published `package.json` and checking that its `mcpName` equals the `name` in `server.json`. Both currently read `io.github.orenyomtov/maccabi-health`.
 
 What `server.json` has to satisfy, all of it enforced: `description` is capped at 100 characters (ours is 87); `version` and `packages[].version` must both equal the npm version, and `latest` is rejected; `packages[].identifier` is the npm package name; `name` must equal `package.json`'s `mcpName` exactly. `packageArguments` carries the `mcp` positional, because this package's bin is a CLI whose MCP server is a subcommand. Without it a client would launch the binary and get the help index instead of a server. There are no `license`, `keywords` or `categories` fields. Published versions are immutable, so a mistake costs a version bump.
 
-`server.json` is deliberately not in `package.json`'s `files`: the publisher reads it from the working tree, and the npm tarball has no use for it. `scripts/release.mjs` does stamp its two version fields, but it does that on the runner and nothing is committed back, so the working tree you run `mcp-publisher` from still carries the old version. Bump both version fields in `server.json` in the repository before publishing a listing, or the registry will reject it for not matching the npm version.
+`server.json` is deliberately not in `package.json`'s `files`: the publisher reads it from the working tree, and the npm tarball has no use for it.
 
 The registry is still marked preview, with breaking changes and data resets expected. Listing is worth doing; depending on it is not.

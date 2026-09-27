@@ -8,7 +8,12 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { ReauthenticationRequired, UpstreamError, type MaccabiSession, type PendingLogin } from "@maccabi/core";
 import type { LoginAuthDriver, LoginDependencies } from "@maccabi/cli/login";
+import { FileSessionStore } from "@maccabi/cli/store";
 import { startLocalHttpMcp, type LocalHttpMcpHandle, type LocalHttpMcpOptions } from "../src/http/main";
+import type { ConnectedReaders } from "../src/tools";
+import { MAX_SESSIONS } from "../src/http/oauth/login-session";
+import { credentialPath, subjectOf } from "../src/http/oauth/subject";
+import { RENEWAL_INTERVAL_MS } from "../src/stdio";
 
 const OTP = "123456";
 const MEMBER = "012345678";
@@ -311,7 +316,7 @@ describe("browser authorization", () => {
     expect((await registerClient(handle, { redirect_uris: ["https://vscode.dev/redirect"] })).status).toBe(201);
   });
 
-  test("a ninth sign-in page evicts the oldest untouched one instead of refusing", async () => {
+  test("a sign-in page past the cap evicts the oldest untouched one instead of refusing", async () => {
     const { handle } = await start();
     const { body: client } = await registerClient(handle, { redirect_uris: [LOOPBACK_REDIRECT] });
     const open = async () => {
@@ -320,14 +325,14 @@ describe("browser authorization", () => {
       return { status: page.status, cookie: cookieOf(page), form: { session: hidden(html, "session"), csrf: hidden(html, "csrf") } };
     };
     const first = await open();
-    for (let n = 1; n < 8; n++) expect((await open()).status).toBe(200);
+    for (let n = 1; n < MAX_SESSIONS; n++) expect((await open()).status).toBe(200);
 
     // Nothing is in flight upstream for a page nobody typed into, so the oldest of those gives way
     // rather than locking the member out for the ten minutes the TTL would otherwise take.
-    const ninth = await open();
-    expect(ninth.status).toBe(200);
+    const extra = await open();
+    expect(extra.status).toBe(200);
     expect((await postForm(handle, first.cookie, { ...first.form, step: "id", id: MEMBER })).status).toBe(400);
-    expect(await (await postForm(handle, ninth.cookie, { ...ninth.form, step: "id", id: MEMBER })).text()).toContain("Where should the code go?");
+    expect(await (await postForm(handle, extra.cookie, { ...extra.form, step: "id", id: MEMBER })).text()).toContain("Where should the code go?");
   });
 });
 
@@ -672,6 +677,53 @@ describe("token lifecycle", () => {
     const query = authorizeQuery(handle, client["client_id"]!, pkce().challenge);
     const response = await fetch(authorizeUrl(handle, { ...query, resource: "https://someone-elses.example/mcp" }), { redirect: "manual" });
     expect(new URL(response.headers.get("location")!).searchParams.get("error")).toBe("invalid_target");
+  });
+});
+
+describe("per-member session renewal", () => {
+  const renewing = (seen: number[]) => ({
+    connect: async (_session: MaccabiSession, owner: { memberId: number } | undefined) => ({
+      readers: { renewSession: async () => { seen.push(owner?.memberId ?? 0); return { data: { renewed: true } }; } } as unknown as ConnectedReaders["readers"],
+      exportSession: async () => synthetic,
+    }),
+  });
+
+  test("a session already on disk is renewed, and so is one that just signed in", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "maccabi-http-"));
+    const owner = { memberId: Number(MEMBER), memberIdCode: "0" };
+    await new FileSessionStore(credentialPath(join(configDir, "sessions"), subjectOf(owner))).save({ session: synthetic, owner });
+    const seen: number[] = [];
+    const handle = await startLocalHttpMcp({ port: 0, configDir, login: fakeUpstream().login, renewalIntervalMs: 15, mcp: renewing(seen) });
+    cleanups.push(async () => { await handle.close(); await rm(configDir, { recursive: true, force: true }); });
+    await vi.waitFor(() => expect(seen).toContain(owner.memberId));
+
+    const fresh: number[] = [];
+    const { handle: signedIn } = await start({ renewalIntervalMs: 15, mcp: renewing(fresh) });
+    await tokenFor(signedIn, { memberId: OTHER_MEMBER });
+    await vi.waitFor(() => expect(fresh).toContain(Number(OTHER_MEMBER)));
+  });
+
+  test("renewal uses the stdio interval, and logout stops only that member", async () => {
+    const started = vi.spyOn(globalThis, "setInterval");
+    const cleared = vi.spyOn(globalThis, "clearInterval");
+    try {
+      const { handle } = await start();
+      const armed = () => started.mock.results
+        .map((result, index) => ({ delay: started.mock.calls[index]?.[1], timer: result.value }))
+        .filter(entry => entry.delay === RENEWAL_INTERVAL_MS);
+      const first = await tokenFor(handle, { memberId: MEMBER });
+      expect(armed()).toHaveLength(1);
+      const firstTimer = armed()[0]!.timer;
+      await tokenFor(handle, { memberId: OTHER_MEMBER });
+      expect(armed()).toHaveLength(2);
+      const client = await connectClient(handle, first.accessToken, "renew-logout");
+      await client.callTool({ name: "maccabi_logout", arguments: {} });
+      expect(cleared).toHaveBeenCalledWith(firstTimer);
+      expect(cleared).not.toHaveBeenCalledWith(armed()[1]!.timer);
+    } finally {
+      started.mockRestore();
+      cleared.mockRestore();
+    }
   });
 });
 
