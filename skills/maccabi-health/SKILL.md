@@ -19,7 +19,7 @@ If you cannot run the CLI, stop. Do not ask for their ID or the SMS code. Say on
 
 | You are | Tell the user |
 | --- | --- |
-| Claude.ai or Claude Desktop chat | This chat can't access Maccabi. Use Claude Code or Claude Cowork. |
+| Claude.ai or Claude Desktop chat | This chat can't access Maccabi. Use Claude Code (not mobile) or Claude Cowork. |
 | ChatGPT, and not ChatGPT Work | This chat can't access Maccabi. Use ChatGPT Work. |
 | grok.com or the Grok app | This chat can't access Maccabi. Use Grok Build or Cursor. |
 | gemini.google.com | This chat can't access Maccabi. Use Antigravity. |
