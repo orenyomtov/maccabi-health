@@ -3,6 +3,12 @@ name: Publish release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: npm version to list, after a release whose registry step failed
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,6 +20,7 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -48,7 +55,52 @@ jobs:
         run: npm publish "$RUNNER_TEMP/npm-release/maccabi-health-${RELEASE_VERSION}.tgz" --ignore-scripts --registry https://registry.npmjs.org --access public --provenance --tag "$DIST_TAG"
       - name: Publish the stable release to the MCP registry
         if: steps.release.outputs.dist_tag == 'latest'
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
+          for _ in $(seq 1 30); do
+            published="$(npm view "maccabi-health@${RELEASE_VERSION}" version 2>/dev/null || true)"
+            if [ "$published" = "$RELEASE_VERSION" ]; then
+              break
+            fi
+            sleep 10
+          done
+          test "$published" = "$RELEASE_VERSION"
+          curl -fsSL -o mcp-publisher.tar.gz https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum -c -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+  list-version:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Publish an already-published npm version to the MCP registry
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          case "$RELEASE_VERSION" in
+            ''|*[!0-9A-Za-z.-]*) echo "Refusing version: $RELEASE_VERSION" >&2; exit 1 ;;
+          esac
+          test "$(npm view "maccabi-health@${RELEASE_VERSION}" version)" = "$RELEASE_VERSION"
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const version = process.argv[1];
+            const server = JSON.parse(readFileSync("server.json", "utf8"));
+            if (server.packages?.[0]?.identifier !== "maccabi-health") throw new Error("server.json does not describe this package.");
+            server.version = version;
+            server.packages[0].version = version;
+            writeFileSync("server.json", JSON.stringify(server, null, 2) + "\n");
+          ' "$RELEASE_VERSION"
           curl -fsSL -o mcp-publisher.tar.gz https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
           echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum -c -
           tar -xzf mcp-publisher.tar.gz mcp-publisher
