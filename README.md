@@ -82,6 +82,29 @@ Cursor, in `~/.cursor/mcp.json`:
 
 `maccabi-health mcp --http` serves loopback Streamable HTTP with OAuth; see [MCP.md](https://github.com/orenyomtov/maccabi-health/blob/main/docs/MCP.md).
 
+## Library
+Install with:
+```sh
+npm install maccabi-health
+```
+
+Example usage:
+```ts
+import { connect, login } from "maccabi-health";
+
+const pending = await login(idNumber);
+await pending.sms();
+const client = await pending.verify(smsCode);
+
+const tests = await client.listTests({ year: 2025 });
+```
+
+`pending.phones` lists the SMS numbers; pass an `index` to `sms()` when there is more than one. A wrong code ends the attempt. 
+
+You can save `await client.exportSession()` and open it later with `connect(session)`.  
+
+The methods are the same reads as the [CLI](https://github.com/orenyomtov/maccabi-health/blob/main/docs/CAPABILITIES.md).
+
 ## Capabilities
 
 | Read | Examples |

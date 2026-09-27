@@ -15,6 +15,9 @@
 export { MaccabiAuth } from "./auth";
 export type { LoginChallenge, LoginPhoneChoice, PendingLogin } from "./auth";
 
+export { connect, login } from "./client";
+export type { MaccabiClient, SmsLogin } from "./client";
+
 export { MaccabiError, AuthenticationError, ReauthenticationRequired, UpstreamError, ISSUES_URL } from "./errors";
 
 export { safeClinical } from "./privacy";

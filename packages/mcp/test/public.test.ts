@@ -43,13 +43,13 @@ describe("published export surface", () => {
   const CORE_VALUES = [
     "AuthenticationError", "ISSUES_URL", "MaccabiAuth", "MaccabiDirectory", "MaccabiError", "MaccabiReaders",
     "MaccabiTransport", "READ_ERROR_GUIDANCE", "ReadOperationError", "ReauthenticationRequired",
-    "UpstreamError", "safeClinical",
+    "UpstreamError", "connect", "login", "safeClinical",
   ];
   const CORE_TYPES = [
     "DirectoryCategory", "DirectoryDoctor", "DirectoryOptions", "DirectoryProviderDetails", "DoctorCity",
     "DoctorSearchOptions", "DoctorSearchResult", "DoctorSpecialty", "LoginChallenge", "LoginPhoneChoice",
-    "MaccabiSession", "OwnerIdentity", "PendingLogin", "ProviderSearchResult", "ReadErrorCode", "ReadResult",
-    "SourceRecord", "TransportOptions",
+    "MaccabiClient", "MaccabiSession", "OwnerIdentity", "PendingLogin", "ProviderSearchResult", "ReadErrorCode", "ReadResult",
+    "SmsLogin", "SourceRecord", "TransportOptions",
   ];
   const MCP_VALUES = ["createMaccabiMcpServer"];
   const MCP_TYPES = ["MaccabiMcpOptions"];
