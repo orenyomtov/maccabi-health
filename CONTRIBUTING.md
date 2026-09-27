@@ -1,6 +1,8 @@
 # Contributing
 
-The published package runs on [Node.js 22 or later](https://nodejs.org/en/download), but the build toolchain does not: tsdown loads `tsdown.config.ts` through Node's own type stripping, which is only unflagged from 22.18.0, and vitest wants 22.12.0. Develop on 22.19 or later, or on 24. Source is TypeScript under `packages/`; the published package contains built JavaScript and declarations.
+The published package runs on [Node.js 22 or later](https://nodejs.org/en/download). Installing it does not run any dependency install scripts: the only ones in this repo are dev dependencies. npm 12 skips those unless they are listed in the root `allowScripts`. `esbuild@0.28.2` is approved because `tsx` needs its postinstall to select a platform binary, and tests spawn `tsx`. `fsevents@2.3.3` is approved because it is the optional macOS watcher; it is not installed on Linux or Windows. A new dependency with an install script has to be added there, pinned to the version you reviewed. npm 10, which still ships with Node 22.19, ignores that field and runs every install script.
+
+The build wants a newer Node than the published package does. tsdown declares `^22.18.0 || ^24.11.0 || >=26`, so `npm ci` on Node 24.4 warns `EBADENGINE`. That warning is not a failure: the build runs there. CI checks Node 22.19 and the current 24.x line. Source is TypeScript under `packages/`; the published package contains built JavaScript and declarations.
 
 ```sh
 git clone https://github.com/orenyomtov/maccabi-health.git

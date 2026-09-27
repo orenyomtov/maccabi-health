@@ -23,7 +23,14 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      - run: npm ci
+      # npm 10 runs every install script. npm 12 skips any that allowScripts does not name.
+      # Strict mode fails that install instead of skipping, on the npm that understands it.
+      - name: Install
+        run: |
+          case $(npm -v) in
+            10.*) npm ci ;;
+            *) npm ci --strict-allow-scripts ;;
+          esac
       - run: npm run check
 
   # The declared engines floor, tested rather than asserted. `npm run check` cannot run here: tsdown
@@ -42,7 +49,7 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
-      - run: npm ci
+      - run: npm ci --strict-allow-scripts
       - name: Pack the tarball
         run: |
           npm run build

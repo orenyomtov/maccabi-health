@@ -28,7 +28,7 @@ jobs:
           package-manager-cache: false
       - name: Install npm with trusted publishing support
         run: npm install --global npm@11.19.1
-      - run: npm ci --ignore-scripts
+      - run: npm ci --ignore-scripts --strict-allow-scripts
       - run: npm run check
       - name: Validate release and set package version in this runner
         id: release
