@@ -9,17 +9,15 @@ metadata:
 
 # Maccabi Health
 
-Read the user's own records from Maccabi Healthcare Services. Unofficial. Read-only: do not book, renew prescriptions, submit requests, pay, or change the profile.
-
-Talk to the user in plain language. Do not mention terminals, flags, or commands. Ask for their תעודת זהות, which phone to text, and the code from the text.
+Read the user's own records from Maccabi Healthcare Services. Unofficial. Support read-only operations.
 
 ## Which way to read
 
-Use the CLI when you can run commands and reach the internet. That is the better way: each read is a short command you can script, narrow, and take as JSON.
+Use the CLI when you can run shell/bash commands and reach the internet. That is the better way: each read is a short command you can script, narrow, and take as JSON.
 
-Use the MCP server only when you cannot run commands. Connect that server with `npx`, not a global install.
+Default to using the CLI, and use the MCP server only when you cannot run shell/bash commands. 
 
-## Install the CLI
+## CLI: when you can run commands
 
 Once, before the first command:
 
@@ -79,22 +77,41 @@ maccabi latest-labs --json --no-input
 
 Then `maccabi help lab-comparison --json`, and call `lab-comparison` with a `test_id` from that result. `maccabi labs --limit 10 --json --no-input` is the longer test list. A PDF command writes a file with `--out`. Do not fetch document URLs yourself.
 
-## When you cannot run commands
+## MCP: When you cannot run commands
 
 Use the Maccabi MCP tools. Ask for the תעודת זהות and the code the same way. `maccabi_login_start` sends the text. `maccabi_login_verify` finishes with the code. One try per code, same as the CLI.
 
-If those tools are not already connected, add this server. `npx` is the right command here:
+If those tools are not already available, install the server yourself. `npx` is the right launch command. Do not use a global install for this.
+
+Claude Code:
+
+```sh
+claude mcp add maccabi --scope user -- npx -y maccabi-health mcp
+```
+
+The `--` is required. `--scope user` keeps it out of the project.
+
+Codex:
+
+```sh
+codex mcp add maccabi -- npx -y maccabi-health mcp
+```
+
+Cursor has no install command. Merge this into `~/.cursor/mcp.json` without removing other servers. `type` is required there:
 
 ```json
 {
   "mcpServers": {
     "maccabi": {
+      "type": "stdio",
       "command": "npx",
       "args": ["-y", "maccabi-health", "mcp"]
     }
   }
 }
 ```
+
+If you cannot run the command or write the file, ask the user to, and give them the one that matches their app.
 
 Call `maccabi_capabilities` first. A list tool returns rows, and each row has a `ref`. `maccabi_detail` reads that row. `maccabi_document` returns its PDF. Every result includes a `next` list with the arguments already filled in. Follow `next` instead of guessing. Do not combine a `ref` from one row with an id from another.
 
