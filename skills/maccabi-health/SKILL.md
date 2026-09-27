@@ -118,3 +118,9 @@ Call `maccabi_capabilities` first. A list tool returns rows, and each row has a 
 ## Privacy
 
 These are the user's real medical records. Do not commit them, paste them into issues, or write them into a repository. Do not read the session file into the chat.
+
+## When something is wrong
+
+If a command fails, a record is missing, or a feature does not work, troubleshoot it. When you understand it, open a GitHub issue with the command, the error code, and what you expected: https://github.com/orenyomtov/maccabi-health/issues
+
+A fix and a pull request is better than an issue alone. Do not include the תעודת זהות, the SMS code, the session file, or the medical records in the issue, the pull request, or the commit.
