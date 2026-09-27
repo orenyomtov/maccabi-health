@@ -5,7 +5,19 @@
 
 Read your own records from Maccabi Healthcare Services, the Israeli health fund, through a CLI or an AI assistant: laboratory history, doctor correspondence, visits, prescriptions, referrals, and supported original PDFs.
 
-Unofficial and unaffiliated with Maccabi. Read-oriented: no booking, prescription renewal, request submission, payments, or profile changes. You need [Node.js 22 or later](https://nodejs.org/en/download), a Maccabi member account, and a phone that receives the SMS code. Output stays in the original Hebrew.
+Unofficial and unaffiliated with Maccabi. Read-oriented: no booking, prescription renewal, request submission, payments, or profile changes. You need a Maccabi member account and a phone that receives the SMS code. Output stays in the original Hebrew.
+
+## Getting started
+
+Copy this to your agent. Then ask it about your records, for example: "analyze my blood tests and give me an executive summary."
+
+```text
+Follow the Maccabi Health skill and use it for my own records:
+https://github.com/orenyomtov/maccabi-health/blob/main/skills/maccabi-health/SKILL.md
+It explains how to read them. Sign in only when it tells you to, in my terminal.
+```
+
+`npx skills add orenyomtov/maccabi-health` installs that skill into Cursor, Claude Code, Codex, and the other agents that read `SKILL.md`. In Claude Code, `/plugin marketplace add orenyomtov/maccabi-health` then `/plugin install maccabi-health@maccabi-health` does the same.
 
 ## Install and sign in
 
@@ -22,7 +34,7 @@ npx --yes --package maccabi-health maccabi login
 npx --yes --package maccabi-health maccabi labs --limit 10 --json
 ```
 
-`maccabi login` asks for your ID and the SMS code in the terminal, so neither enters a model's context. The session file is `session.json` in `~/.config/maccabi-mcp` (on Windows, `%APPDATA%\maccabi-mcp`), mode 0600. Anyone who can read it can read your records until it expires. The stdio MCP server uses that same file. `maccabi mcp --http` does not: sign-in happens in the browser and is stored separately. Details in [AUTH.md](https://github.com/orenyomtov/maccabi-health/blob/main/docs/AUTH.md).
+`maccabi login` asks for your ID and the SMS code in the terminal, so neither enters a model's context. The session file is `session.json` in `~/.config/maccabi-mcp` (on Windows, `%APPDATA%\maccabi-mcp`). Anyone who can read it can read your records until it expires. The stdio MCP server uses that same file. `maccabi mcp --http` does not: sign-in happens in the browser and is stored separately. Details in [AUTH.md](https://github.com/orenyomtov/maccabi-health/blob/main/docs/AUTH.md).
 
 If `maccabi` is not on your PATH after a global install, use the absolute path to the bin or stick with `npx`.
 

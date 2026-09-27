@@ -1,0 +1,18 @@
+{
+  "name": "maccabi-health",
+  "owner": {
+    "name": "Oren Yomtov",
+    "url": "https://github.com/orenyomtov"
+  },
+  "description": "Read your own Maccabi Healthcare records.",
+  "plugins": [
+    {
+      "name": "maccabi-health",
+      "source": "./",
+      "description": "Read the user's own Maccabi Healthcare records with the maccabi CLI.",
+      "version": "0.1.0",
+      "strict": false,
+      "skills": ["./skills/maccabi-health"]
+    }
+  ]
+}
