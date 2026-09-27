@@ -11,11 +11,16 @@ Unofficial and unaffiliated with Maccabi. You need your ID number (תעודת ז
 
 ## Getting started
 
-Copy this to your agent. Then you can ask it about your records, for example: "analyze my blood tests, and tell me if my cholesterol is a problem"
+Copy and paste this to your agent:
 
 ```text
-Read the Maccabi Health skill which explains how you can access my medical records:
+You can use this to access my medical records:
 https://raw.githubusercontent.com/orenyomtov/maccabi-health/main/skills/maccabi-health/SKILL.md
+```
+
+Then you can ask it about your medical records, for example: 
+```
+Analyze my blood tests results, and tell me if my cholesterol is a problem
 ```
 
 Agents like Claude Code, Cowork, Codex, Cursor, Instinct, Muse, and ChatGPT Work can follow that.
