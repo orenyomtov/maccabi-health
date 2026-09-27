@@ -33,9 +33,9 @@ maccabi login --code 000000 --json --no-input
 
 One try per code. A wrong code ends that text. Do not submit it again. Ask if they want a new text and start over with `--id`. The code expires after ten minutes. A login lasts about an hour, then ask the same way again.
 
-`maccabi` lists every command. `maccabi help COMMAND --json` is one command's flags and which ids to copy from an earlier result. Do not load `maccabi help` with no command unless the index is not enough. Add `--json --no-input` to every command except `mcp`. Failure leaves stdout empty and prints `{"error":{"code","message","exitCode"}}` on stderr. Exit 3 means sign in again. Exit 2 means the flags are wrong.
+`maccabi` lists the commands. `maccabi help COMMAND --json` is the one you are about to run: its flags, and which ids to copy from a result you already have. Add `--json --no-input` on every command except `mcp`.
 
-Copy ids from JSON you already hold. Do not invent them or pair an id from one row with an id from another. `--limit` and `--offset` slice a fetched response. They do not ask for older pages. Check the session first with `maccabi status --verify --json --no-input`.
+Take those ids from that result. Do not invent one, and do not mix an id from one row with an id from another. `--limit` only shortens the result you already fetched. Before the first read, `maccabi status --verify --json --no-input` checks the login. Exit 3 means sign in again.
 
 You can read labs and one test's past values, prescriptions, visits, referrals, doctor correspondence, vaccinations, certificates, billing summaries, imaging-study metadata, and the original PDFs the portal serves. Keep the original Hebrew unless the user asks for a translation. Summarize only what came back.
 
@@ -45,7 +45,7 @@ Recent blood tests: `maccabi latest-labs --json --no-input`, then `maccabi help 
 
 Same questions: תעודת זהות, then the code. `maccabi_login_start` sends the text. `maccabi_login_verify` finishes it. One try per code.
 
-If those tools are missing, install the server yourself with `npx`, not a global install. If you cannot, ask the user to, and give them the command for their app.
+If the mcp is not yet installed, install it first. If you cannot, ask the user to, and give them the command for their app.
 
 Claude Code needs the `--`. `--scope user` keeps it out of the project:
 
@@ -73,14 +73,14 @@ Cursor has no install command. Merge this into `~/.cursor/mcp.json` without remo
 }
 ```
 
-Call `maccabi_capabilities` first. A list row carries a `ref`. `maccabi_detail` reads it, `maccabi_document` returns its PDF, and `next` already has the following arguments. Follow `next`. Do not combine a `ref` from one row with an id from another.
+A list row carries a `ref`. `maccabi_detail` reads it, `maccabi_document` returns its PDF, and `next` already has the following arguments. Follow `next`. Do not combine a `ref` from one row with an id from another.
 
 ## Privacy
 
-These are real medical records. Do not commit them, put them in an issue or pull request, or read the session file into the chat. That includes the תעודת זהות, the SMS code, and the session file.
+These are real medical records. Handle them with the appropriate care.
 
 ## When something is wrong
 
-Troubleshoot a failed command, a missing record, or a feature that does not work. Then open an issue with the command, the error code, and what you expected: https://github.com/orenyomtov/maccabi-health/issues
+Troubleshoot a failed command, a feature, or a feature that does not work. Then open an issue with the command, the error code, and what you expected: https://github.com/orenyomtov/maccabi-health/issues
 
-A fix and a pull request is better than an issue alone.
+Even better, if you can, fix the problem and submit a pull request to share the fix with everyone!
