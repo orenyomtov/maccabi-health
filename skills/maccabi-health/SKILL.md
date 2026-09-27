@@ -11,11 +11,11 @@ metadata:
 
 Read the user's own Maccabi Healthcare records. Unofficial. Support read-only operations.
 
-Use the CLI when you can run shell commands and reach the internet. Each read is a short command you can script and take as JSON. Use the MCP server only when you cannot run shell commands.
+Use the CLI when you can run shell commands and reach the internet. Each read is a short command you can script and even get the output as JSON. Use the MCP server only when you cannot run shell commands.
 
 ## CLI
 
-Install once: `npm install -g maccabi-health`. Then every command is `maccabi ...`. If `maccabi` is not found, prefix the same arguments with `npx --yes --package maccabi-health maccabi`.
+Install once: `npm install -g maccabi-health`. Then every command is `maccabi ...`. If `maccabi` is not found, run `npx -y maccabi-health` with the same arguments.
 
 Ask for their תעודת זהות and put those digits in the command. `000000000` is a placeholder. Do not send it.
 

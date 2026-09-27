@@ -29,8 +29,8 @@ maccabi labs --limit 10 --json
 Or, without a global install:
 
 ```sh
-npx --yes --package maccabi-health maccabi login
-npx --yes --package maccabi-health maccabi labs --limit 10 --json
+npx -y maccabi-health login
+npx -y maccabi-health labs --limit 10 --json
 ```
 
 `maccabi login` asks for your ID and the SMS code in the terminal, so neither enters a model's context. The session file is `session.json` in `~/.config/maccabi-mcp` (on Windows, `%APPDATA%\maccabi-mcp`). Anyone who can read it can read your records until it expires. The stdio MCP server uses that same file. `maccabi mcp --http` does not: sign-in happens in the browser and is stored separately. Details in [AUTH.md](https://github.com/orenyomtov/maccabi-health/blob/main/docs/AUTH.md).

@@ -9,10 +9,10 @@ maccabi help COMMAND
 maccabi --version
 ```
 
-To run without a global install, select the CLI bin explicitly:
+To run without a global install:
 
 ```sh
-npx --yes --package maccabi-health maccabi
+npx -y maccabi-health
 ```
 
 Discovery has two levels, and all of it is offline: it touches neither storage nor the network.
