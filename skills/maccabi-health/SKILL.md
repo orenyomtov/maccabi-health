@@ -1,8 +1,8 @@
 ---
 name: maccabi-health
-description: Reads the user's own Maccabi Healthcare records (labs, visits, prescriptions, referrals, imaging, and documents). Use when the user mentions Maccabi, מכבי, maccabi4u, their Israeli health-fund records, blood tests, lab results, or asks an agent to look at those records. Asks the user for their תעודת זהות and the SMS code.
+description: Reads the user's own Maccabi Healthcare records (labs, visits, prescriptions, referrals, imaging, and documents). Use when the user mentions Maccabi, מכבי, maccabi4u, their Israeli health-fund records, blood tests, lab results, or asks an agent to look at those records. Asks the user for their תעודת זהות and the SMS OTP code.
 license: MIT
-compatibility: Shell and internet. Use the maccabi-health CLI. ChatGPT Work, including cloud and mobile, Cowork, and Claude Code can. If this chat cannot, name Claude Code, ChatGPT Work, Grok Build, or the Antigravity CLI.
+compatibility: Shell and internet. Use the maccabi-health CLI. 
 metadata:
   version: "0.1.0"
 ---
@@ -11,7 +11,7 @@ metadata:
 
 Read the user's own Maccabi Healthcare records. Unofficial. Support read-only operations.
 
-Use the CLI when you can run shell commands and reach the internet. Each read is a short command you can script and even get the output as JSON. ChatGPT Work can do this in the cloud and on mobile, same as Cowork and Claude Code. Do not install MCP if you can run the CLI.
+Use the CLI when you can run shell commands and reach the internet. Each read is a short command you can script and even get the output as JSON. No need to install MCP if you can run the CLI instead.
 
 ## Which app
 
@@ -50,7 +50,7 @@ One try per code. A wrong code ends that text. Do not submit it again. Ask if th
 
 ### Browser login (when the host blocks `--id` / `--code`)
 
-Use this on Claude Code mobile. Also use it when the host refuses to run a command that contains an ID or SMS code (classifier, "exfiltration"), or when you prefer the user to enter the ID and the SMS code themselves so those values are not passed through you.
+Use this when the host refuses to run a command that contains an ID or SMS code (classifier, "exfiltration"), or when you prefer the user to enter the ID and the SMS code themselves so those values are not passed through you.
 
 ```sh
 maccabi-health login --http
