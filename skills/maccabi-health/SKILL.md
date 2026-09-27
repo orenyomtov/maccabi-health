@@ -33,7 +33,14 @@ maccabi login --code 000000 --json --no-input
 
 One try per code. A wrong code ends that text. Do not submit it again. Ask if they want a new text and start over with `--id`. The code expires after ten minutes. A login lasts about an hour, then ask the same way again.
 
-`maccabi` lists the commands. `maccabi help COMMAND --json` is the one you are about to run: its flags, and which ids to copy from a result you already have. Add `--json --no-input` on every command except `mcp`.
+`maccabi` lists the commands. `maccabi help` is the full reference:
+
+```text
+maccabi help COMMAND   usage, flags, notes and caveats for one command (add --json)
+maccabi help           every command in full (add --json for the discovery document)
+```
+
+Add `--json --no-input` on every command except `mcp`.
 
 Take those ids from that result. Do not invent one, and do not mix an id from one row with an id from another. `--limit` only shortens the result you already fetched. Before the first read, `maccabi status --verify --json --no-input` checks the login. Exit 3 means sign in again.
 
