@@ -16,7 +16,7 @@ Read the Maccabi Health skill which explains how you can access my medical recor
 https://github.com/orenyomtov/maccabi-health/blob/main/skills/maccabi-health/SKILL.md
 ```
 
-`npx skills add orenyomtov/maccabi-health` installs that skill into Cursor, Claude Code, Codex, and the other agents that read `SKILL.md`.
+`npx skills add orenyomtov/maccabi-health` installs that skill into Cursor, Claude Code, and Codex.
 
 ## Install and sign in
 
