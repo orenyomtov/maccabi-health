@@ -19,14 +19,14 @@ If you cannot run the CLI, stop. Do not ask for their ID or the SMS code. Say on
 
 | You are | Tell the user |
 | --- | --- |
-| Claude.ai or Claude Desktop chat | This chat can't access Maccabi. Use Claude Code (not mobile) or Claude Cowork. |
+| Claude.ai or Claude Desktop chat | This chat can't access Maccabi. Use Claude Code, or Claude Cowork. |
 | ChatGPT, and not ChatGPT Work | This chat can't access Maccabi. Use ChatGPT Work. |
 | grok.com or the Grok app | This chat can't access Maccabi. Use Grok Build or Cursor. |
 | gemini.google.com | This chat can't access Maccabi. Use Antigravity. |
 
-Claude Code, Cowork, Cursor, Codex, ChatGPT Work, Gemini CLI, Antigravity, and Grok Build run the CLI. That includes ChatGPT Work in the cloud and on mobile.
+Claude Code, Cowork, Cursor, Codex, ChatGPT Work, Gemini CLI, Antigravity, and Grok Build run the CLI. 
 
-`npx skills add orenyomtov/maccabi-health` installs this file for Claude Code, Codex, and Cursor.
+`npx skills add orenyomtov/maccabi-health` installs this file for Claude Code, Codex, Cursor, and many other agents.
 
 ## CLI
 
@@ -50,7 +50,7 @@ One try per code. A wrong code ends that text. Do not submit it again. Ask if th
 
 ### Browser login (when the host blocks `--id` / `--code`)
 
-Use this when the host refuses to run a command that contains an ID or SMS code (classifier, "exfiltration"), or when you prefer the user to enter the ID and the SMS code themselves so those values are not passed through you.
+Use this on Claude Code mobile. Also use it when the host refuses to run a command that contains an ID or SMS code (classifier, "exfiltration"), or when you prefer the user to enter the ID and the SMS code themselves so those values are not passed through you.
 
 ```sh
 maccabi-health login --http
