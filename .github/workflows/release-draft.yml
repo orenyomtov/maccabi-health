@@ -1,0 +1,57 @@
+name: Release draft
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-draft
+  cancel-in-progress: true
+
+jobs:
+  draft:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+      - name: Plan the draft
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASES_FILE: ${{ runner.temp }}/releases.json
+        run: |
+          set -euo pipefail
+          gh release list --limit 100 --json tagName,isDraft > "$RELEASES_FILE"
+          node scripts/release-draft.mjs
+      - name: Write the notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" -f previous_tag_name="$PREVIOUS" -f target_commitish="$GITHUB_SHA" \
+            --jq .body > "$RUNNER_TEMP/draft-notes.md"
+          test -s "$RUNNER_TEMP/draft-notes.md"
+      - name: Create or update the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          EDIT: ${{ steps.plan.outputs.edit }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EDIT" ]; then
+            gh release edit "$EDIT" --draft --tag "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file "$RUNNER_TEMP/draft-notes.md"
+          else
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" --notes-file "$RUNNER_TEMP/draft-notes.md"
+          fi

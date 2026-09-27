@@ -35,6 +35,8 @@ A Trusted Publisher can only be attached to a package npm already knows about, s
 
 From `0.1.1` onward, publish a GitHub release tagged `vX.Y.Z`, or a SemVer prerelease such as `v0.2.0-beta.1` with the prerelease checkbox selected. The tag and checkbox must agree; build metadata (`+suffix`) is rejected. Stable releases use npm `latest`; prereleases use `next`. The workflow checks, validates, stamps the runner's package version without a source commit, builds, packs, and publishes through OIDC. A stable release then publishes that same version to the MCP registry. A prerelease does not.
 
+Pushing to `main` updates one draft release. [release-draft.yml](https://github.com/orenyomtov/maccabi-health/blob/main/.github/workflows/release-draft.yml) sets the tag to the next patch and fills the notes from commits since the previous tag. Change the tag on the draft before publishing if this bump should not be a patch; the next push keeps a tag that is still ahead of the published release. Publish that draft to ship. You do not edit CHANGELOG.md. [changelog.yml](https://github.com/orenyomtov/maccabi-health/blob/main/.github/workflows/changelog.yml) commits the published notes into it. Notes on the draft are replaced on each push, so a hand edit belongs at publish time.
+
 For local verification, `npm pack` builds a tarball without publishing. Install that tarball and check CLI discovery and both MCP transports before a release.
 
 ## MCP Registry listing

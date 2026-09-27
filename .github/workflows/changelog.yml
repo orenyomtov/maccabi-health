@@ -1,0 +1,68 @@
+name: Update changelog
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: changelog
+  cancel-in-progress: false
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+      - name: Generate notes when the release left them empty
+        id: generated
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          empty="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(String(event.release?.body ?? "").trim() ? "no" : "yes");')"
+          if [ "$empty" = yes ]; then
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="$RELEASE_TAG" --jq .body > "$RUNNER_TEMP/generated-notes.md"
+            echo "file=$RUNNER_TEMP/generated-notes.md" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Resolve release notes
+        id: notes
+        env:
+          CHANGELOG_MODE: prepare
+          GENERATED_NOTES_FILE: ${{ steps.generated.outputs.file }}
+        run: node scripts/changelog.mjs
+      - name: Update the GitHub release notes
+        if: steps.notes.outputs.update_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+        run: gh release edit "$RELEASE_TAG" --notes-file "$NOTES_FILE"
+      - name: Write the notes into CHANGELOG.md
+        env:
+          CHANGELOG_MODE: apply
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+        run: node scripts/changelog.mjs
+      - name: Commit the changelog
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "Changelog already matches this release."
+            exit 0
+          fi
+          git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+            commit -m "Update changelog for ${RELEASE_TAG}."
+          git push
