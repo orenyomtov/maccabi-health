@@ -5,19 +5,18 @@
 
 Read your own records from Maccabi Healthcare Services, the Israeli health fund, through a CLI or an AI assistant: laboratory history, doctor correspondence, visits, prescriptions, referrals, and supported original PDFs.
 
-Unofficial and unaffiliated with Maccabi. Read-oriented: no booking, prescription renewal, request submission, payments, or profile changes. You need a Maccabi member account and a phone that receives the SMS code. Output stays in the original Hebrew.
+Unofficial and unaffiliated with Maccabi. Read-oriented: no booking, prescription renewal, request submission, payments, or profile changes. You need your ID number and the phone that receives the SMS login code.
 
 ## Getting started
 
-Copy this to your agent. Then ask it about your records, for example: "analyze my blood tests and give me an executive summary."
+Copy this to your agent. Then ask it about your records, for example: "analyze my blood tests"
 
 ```text
-Follow the Maccabi Health skill and use it for my own records:
+Read the Maccabi Health skill which explains how you can access my medical records:
 https://github.com/orenyomtov/maccabi-health/blob/main/skills/maccabi-health/SKILL.md
-It explains how to read them. Sign in only when it tells you to, in my terminal.
 ```
 
-`npx skills add orenyomtov/maccabi-health` installs that skill into Cursor, Claude Code, Codex, and the other agents that read `SKILL.md`. In Claude Code, `/plugin marketplace add orenyomtov/maccabi-health` then `/plugin install maccabi-health@maccabi-health` does the same.
+`npx skills add orenyomtov/maccabi-health` installs that skill into Cursor, Claude Code, Codex, and the other agents that read `SKILL.md`.
 
 ## Install and sign in
 
