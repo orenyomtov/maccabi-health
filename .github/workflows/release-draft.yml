@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$EDIT" ]; then
-            gh release edit "$EDIT" --draft --tag "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file "$RUNNER_TEMP/draft-notes.md"
+            gh release edit "$EDIT" --draft --tag "$TAG" --target main --title "$TAG" --notes-file "$RUNNER_TEMP/draft-notes.md"
           else
-            gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" --notes-file "$RUNNER_TEMP/draft-notes.md"
+            gh release create "$TAG" --draft --target main --title "$TAG" --notes-file "$RUNNER_TEMP/draft-notes.md"
           fi
