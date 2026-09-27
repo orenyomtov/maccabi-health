@@ -33,7 +33,7 @@ maccabi login --code 000000 --json --no-input
 
 One try per code. A wrong code ends that text. Do not submit it again. Ask if they want a new text and start over with `--id`. The code expires after ten minutes. A login lasts about an hour, then ask the same way again.
 
-`maccabi` lists the commands. `maccabi help` is the full reference:
+`maccabi` lists the commands. `maccabi help` is the full reference, about 6,000 tokens:
 
 ```text
 maccabi help COMMAND   usage, flags, notes and caveats for one command (add --json)
