@@ -1,11 +1,11 @@
 # Maccabi Health
 
-**Ask an AI assistant for a second look at your own lab results, scans, doctor visits, and prescriptions.**
+**Ask an AI assistant for a second look at your lab results, scans, doctor visits, messages, referrals, and prescriptions.**
 
 [![npm](https://img.shields.io/npm/v/maccabi-health.svg)](https://www.npmjs.com/package/maccabi-health)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/orenyomtov/maccabi-health/blob/main/LICENSE)
 
-Read your own records from Maccabi Healthcare Services, the Israeli health fund, through a CLI or an AI assistant: laboratory history, doctor correspondence, visits, prescriptions, referrals, and supported original PDFs.
+Read your records from Maccabi Healthcare Services, the Israeli health fund, through a CLI or an AI assistant: laboratory history, doctor correspondence, visits, prescriptions, referrals, and supported original PDFs.
 
 Unofficial and unaffiliated with Maccabi. You need your ID number (תעודת זהות) and access to the phone that receives the login code via SMS.
 
