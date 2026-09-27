@@ -1,5 +1,7 @@
 # Maccabi Health
 
+**Ask an AI assistant for a second look at your own lab results, doctor visits, and prescriptions.**
+
 [![npm](https://img.shields.io/npm/v/maccabi-health.svg)](https://www.npmjs.com/package/maccabi-health)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/orenyomtov/maccabi-health/blob/main/LICENSE)
 
