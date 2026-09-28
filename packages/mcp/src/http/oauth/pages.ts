@@ -1,12 +1,18 @@
 /**
- * The sign-in pages. Plain strings, no template engine, no JavaScript and no external asset, so
- * there is nothing on these pages that a browser fetches from anywhere but this process.
+ * The sign-in pages. Plain strings, no template engine and no external asset, so a browser fetches
+ * nothing but this response. One inline script locks a form after its first submit; CSP allows that
+ * script by hash and nothing else.
  */
+import { createHash } from "node:crypto";
+
+// Disable on the next turn. Disabling the submitter inside the submit event drops the POST in Chrome.
+const LOCK_SCRIPT = `addEventListener("submit",function(e){var f=e.target;if(f.dataset.sent){e.preventDefault();return}f.dataset.sent="1";var b=f.querySelector("button");setTimeout(function(){if(b)b.disabled=true})});addEventListener("pageshow",function(){for(var f of document.forms){delete f.dataset.sent;var b=f.querySelector("button");if(b)b.disabled=false}})`;
+const SCRIPT_HASH = createHash("sha256").update(LOCK_SCRIPT).digest("base64");
 
 export const PAGE_HEADERS: Record<string, string> = {
   "content-type": "text/html; charset=utf-8",
   "cache-control": "no-store",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+  "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${SCRIPT_HASH}'; form-action 'self'`,
   "x-frame-options": "DENY",
   "referrer-policy": "no-referrer",
 };
@@ -24,13 +30,14 @@ label{display:block;margin:.75rem 0 .25rem;font-weight:600}
 input[type=text],input[type=password]{width:100%;box-sizing:border-box;padding:.6rem;font:inherit;border:1px solid #8888;border-radius:.4rem}
 fieldset{border:1px solid #8888;border-radius:.4rem;margin:0 0 1rem}
 button{margin-top:1rem;padding:.6rem 1.1rem;font:inherit;border:0;border-radius:.4rem;background:#1462b4;color:#fff;cursor:pointer}
+button:disabled,form[data-sent] button{opacity:.6;cursor:default;pointer-events:none}
 .note{font-size:.85rem;opacity:.7}`;
 
 function layout(title: string, body: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
-<body><main>${body}</main></body></html>
+<body><main>${body}</main><script>${LOCK_SCRIPT}</script></body></html>
 `;
 }
 
@@ -79,7 +86,8 @@ export function errorPage(message: string, restartHint = "Close this window and 
 /** Shown after a CLI browser sign-in writes the session file. No upstream text. */
 export function donePage(): string {
   return layout("Signed in", `<h1>Signed in</h1>
-<p>You can close this window. The session is saved on this machine.</p>`);
+<p>The session is saved on this machine.</p>
+<p>Message the agent and tell it you have logged in.</p>`);
 }
 
 function errorBlock(error?: string): string {
