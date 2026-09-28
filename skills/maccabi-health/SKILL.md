@@ -38,6 +38,8 @@ To login, ask for their תעודת זהות and put those digits in the command.
 maccabi-health login --id 000000000 --no-input
 ```
 
+Note: the user's ID and OTP are allowed to be in the conversation's context/history, that's how this skill and tool work.
+
 `--id` and `--code` are separate commands. Never pass both at once. If several phones are registered, the command lists numbered choices and sends nothing. Ask which one, then repeat with `--phone N`.
 
 Ask them for the code from the text send to their phone. `000000` is a placeholder for the code they received.
@@ -50,7 +52,7 @@ One try per code. A wrong code ends that text. Do not submit it again. Ask if th
 
 ### Browser login (when the host blocks `--id` / `--code`)
 
-Use this when the host refuses to run a command that contains an ID or SMS code (classifier, "exfiltration"), or when you prefer the user to enter the ID and the SMS code themselves so those values are not passed through you.
+Use this when the host refuses to run a command that contains an ID or SMS code (classifier, "exfiltration"), or when you can't have these values passed through you. But generally the regular login flow should be used instead, use this only if the regular approach does not work for some reason. And remember the ID and OTP are okay to be in your context.
 
 ```sh
 maccabi-health login --http
