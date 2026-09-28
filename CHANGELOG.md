@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.6
+
+**Full Changelog**: https://github.com/orenyomtov/maccabi-health/compare/v0.1.5...v0.1.6
+
 ## 0.1.5
 
 **Full Changelog**: https://github.com/orenyomtov/maccabi-health/compare/v0.1.4...v0.1.5
