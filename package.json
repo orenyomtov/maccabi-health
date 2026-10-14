@@ -91,6 +91,6 @@
     "cheerio": "1.2.0",
     "entities": "8.1.0",
     "tough-cookie": "^6.0.2",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   }
 }
