@@ -89,7 +89,7 @@
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "^2.1.0",
     "cheerio": "1.2.0",
-    "entities": "8.1.0",
+    "entities": "9.0.0",
     "tough-cookie": "^6.0.2",
     "zod": "4.6.5"
   }
